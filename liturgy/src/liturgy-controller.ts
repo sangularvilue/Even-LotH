@@ -134,8 +134,25 @@ function paginateSections(sections: PrayerSection[]): string[] {
         }
       }
       // Add blank line before bracketed instructions
-      if (raw.startsWith('[') && raw.endsWith(']') && raw.length < 40) {
+      if (raw.startsWith('[') && raw.endsWith(']') && raw.length < 60) {
         if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+          allLines.push('')
+        }
+      }
+      // Add blank line before the Confiteor / penitential rite
+      if (raw.startsWith('I confess to almighty God') ||
+          raw.startsWith('Lord Jesus') ||
+          raw.startsWith('Lord, have mercy') ||
+          raw.startsWith('God, come to my assistance')) {
+        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+          allLines.push('')
+        }
+      }
+      // Add blank line before response lines for readability
+      if (raw.startsWith('R/ ') && allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+        // Don't add break if previous line was also a response
+        const prev = allLines[allLines.length - 1]
+        if (!prev.startsWith('R/ ')) {
           allLines.push('')
         }
       }
@@ -560,14 +577,41 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
+  function prevDateStr(dateStr: string): string {
+    const y = parseInt(dateStr.slice(0, 4))
+    const m = parseInt(dateStr.slice(4, 6)) - 1
+    const d = parseInt(dateStr.slice(6, 8))
+    const prev = new Date(y, m, d - 1)
+    return `${prev.getFullYear()}${String(prev.getMonth() + 1).padStart(2, '0')}${String(prev.getDate()).padStart(2, '0')}`
+  }
+
   async function loadHours(date?: string): Promise<HourInfo[]> {
     if (date) state.date = date
     publishPhase('loading')
     log(`Loading hours for ${state.date}...`)
 
     try {
-      const index = await fetchHours(state.date)
-      state.hours = index.hours
+      const [index, yesterdayIndex] = await Promise.all([
+        fetchHours(state.date),
+        fetchHours(prevDateStr(state.date)).catch(() => null),
+      ])
+
+      state.hours = [...index.hours]
+
+      // Add yesterday's Evening Prayer and Night Prayer for night workers
+      if (yesterdayIndex?.hours) {
+        const yesterdayEP = yesterdayIndex.hours.find(h =>
+          h.name.toLowerCase().includes('evening prayer'))
+        const yesterdayNP = yesterdayIndex.hours.find(h =>
+          h.name.toLowerCase().includes('night prayer'))
+        if (yesterdayEP) {
+          state.hours.push({ ...yesterdayEP, name: `Yesterday's Evening Prayer` })
+        }
+        if (yesterdayNP) {
+          state.hours.push({ ...yesterdayNP, name: `Yesterday's Night Prayer` })
+        }
+      }
+
       state.selectedHourIndex = 0
       onHoursLoaded?.(state.hours)
       log(`Loaded ${state.hours.length} hours`)
