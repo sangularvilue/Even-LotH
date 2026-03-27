@@ -72,102 +72,205 @@ function wordWrap(text: string, maxWidth: number): string[] {
   return result.length > 0 ? result : [text]
 }
 
+// ── Junk lines to strip from intro ──
+const INTRO_JUNK = [
+  /general instruction/i,
+  /please pray with us/i,
+  /joining with us in saying/i,
+  /indicated in this/i,
+  /consider an examination/i,
+  /best make use of our time/i,
+  /\[highlight\]/i,
+  /\[\.?\]/,
+  /^\[Night Prayer/i,
+  /^\[Morning Prayer/i,
+  /^\[Evening Prayer/i,
+  /^\[Office of Readings/i,
+  /^\[Midmorning Prayer/i,
+  /^\[Midday Prayer/i,
+  /^\[Midafternoon Prayer/i,
+  /^\[Invitatory/i,
+]
+
+function isIntroJunk(line: string): boolean {
+  return INTRO_JUNK.some(re => re.test(line))
+}
+
 /**
- * Convert semantic markers from the API into plain-text formatting
- * for the glasses text container.
+ * Convert semantic markers to plain text and reformat psalm/canticle headers.
  *
- *   {r}...{/r}        rubric       -> [...]  or  -- HEADING --
- *   {v}...{/v}        response     -> R/
- *   {ant}...{/ant}    antiphon     -> * Ant.:
- *   {i}...{/i}        cross-ref    -> (...)
- *   {title}...{/title} title       -> -- Title --
+ * Psalm headers become:
+ *   Psalm 16 - God is my portion, my inheritance.
+ *   (The Father raised up Jesus...) - Acts 2:24
+ *
+ * Returns { text, isNewSection } where isNewSection forces a page break.
  */
-function formatLine(line: string): string {
-  return line
-    // All-caps rubric headings on own line -> decorated
-    .replace(/^\{r\}([A-Z][A-Z\s\d:,\-]+)\{\/r\}$/, '-- $1 --')
-    // Psalm/canticle title rubrics
-    .replace(/^\{r\}(Psalm\s.+|Canticle\s.+|Luke\s.+|The Messiah.+)\{\/r\}$/i, '-- $1 --')
-    // Bracketed instructions like [Psalm-prayer]
-    .replace(/\{r\}\[([^\]]+)\]\{\/r\}/g, '[$1]')
-    // Other rubrics -> brackets
-    .replace(/\{r\}(.+?)\{\/r\}/g, '[$1]')
-    // Response marker
-    .replace(/\{v\}\u2014\{\/v\}\s*/g, 'R/ ')
-    // Antiphon labels
-    .replace(/\{ant\}(Ant\.?\s*\d*)\{\/ant\}\s*/g, '* $1 ')
-    // Italic cross-references -> parens
-    .replace(/\{i\}(.+?)\{\/i\}/g, '($1)')
-    // Title blocks
-    .replace(/\{title\}(.+?)\{\/title\}/g, '-- $1 --')
-    // Clean any remaining markers
-    .replace(/\{\/?\w+\}/g, '')
+function formatLines(rawLines: string[]): { text: string; pageBreak: boolean }[] {
+  const result: { text: string; pageBreak: boolean }[] = []
+  let i = 0
+
+  while (i < rawLines.length) {
+    let line = rawLines[i]!
+
+    // Strip intro junk
+    if (isIntroJunk(line)) { i++; continue }
+
+    // Detect psalm/canticle title patterns:
+    //   Pattern A (single line): {r}Psalm 16 - subtitle{/r}
+    //   Pattern B (split across lines):
+    //     {r}Psalm 16
+    //     God is my portion, my inheritance{/r}
+    //   Followed optionally by: {i}cross-reference{/i} (Book X:Y).
+
+    // Pattern A: complete on one line
+    const titleMatchA = line.match(/^\{r\}((?:Psalm|Canticle)\s+[^{]*)\{\/r\}$/i)
+    // Pattern B: opening {r} with psalm/canticle, no closing
+    const titleMatchB = line.match(/^\{r\}((?:Psalm|Canticle)\s+\d+[^{]*)$/i)
+
+    if (titleMatchA || titleMatchB) {
+      let title: string
+      let subtitle = ''
+
+      if (titleMatchA) {
+        // May contain title + subtitle separated by newline within the {r} block
+        const parts = titleMatchA[1].trim().split('\n').map(p => p.trim()).filter(Boolean)
+        title = parts[0]!
+        subtitle = parts.slice(1).join(' ')
+      } else {
+        // Pattern B: title on this line, subtitle on next line ending with {/r}
+        title = titleMatchB![1].trim()
+        if (i + 1 < rawLines.length) {
+          const nextLine = rawLines[i + 1]!
+          const closingMatch = nextLine.match(/^(.+?)\{\/r\}$/)
+          if (closingMatch) {
+            subtitle = closingMatch[1].trim()
+            i++
+          }
+        }
+      }
+
+      // Check if next line is also a red subtitle
+      if (!subtitle && i + 1 < rawLines.length) {
+        const nextMatch = rawLines[i + 1]!.match(/^\{r\}(.+?)\{\/r\}$/)
+        if (nextMatch && !/^(HYMN|PSALMODY|READING|RESPONSORY|INTERCESSIONS|CONCLUDING|DISMISSAL|CANTICLE OF)/i.test(nextMatch[1])) {
+          subtitle = nextMatch[1].trim()
+          i++
+        }
+      }
+
+      let headerLine = subtitle ? `${title} - ${subtitle}` : title
+
+      // Check if next line is a cross-reference
+      let crossRef = ''
+      if (i + 1 < rawLines.length) {
+        const refMatch = rawLines[i + 1]!.match(/^\{i\}(.+?)\{\/i\}\s*(\([^)]+\))?\.?$/)
+        if (refMatch) {
+          crossRef = `(${refMatch[1]}) - ${refMatch[2] || ''}`.replace(/ - $/, '')
+          i++
+        }
+      }
+
+      result.push({ text: headerLine, pageBreak: true })
+      if (crossRef) result.push({ text: crossRef, pageBreak: false })
+      result.push({ text: '', pageBreak: false })
+      i++
+      continue
+    }
+
+    // Detect section headings: {r}READING{/r}, {r}HYMN{/r} etc.
+    const sectionMatch = line.match(/^\{r\}([A-Z][A-Z\s\d:,\-]+)\{\/r\}$/)
+    if (sectionMatch) {
+      const heading = sectionMatch[1].trim()
+      // READING often has a reference on the same line or next
+      result.push({ text: `== ${heading} ==`, pageBreak: true })
+      i++
+      continue
+    }
+
+    // Format remaining markers
+    let formatted = line
+      // Bracketed instructions like [Psalm-prayer]
+      .replace(/\{r\}\[([^\]]+)\]\{\/r\}/g, '[$1]')
+      // Other rubrics -> brackets
+      .replace(/\{r\}(.+?)\{\/r\}/g, '[$1]')
+      // Response marker
+      .replace(/\{v\}\u2014\{\/v\}\s*/g, 'R/ ')
+      // Antiphon labels
+      .replace(/\{ant\}(Ant\.?\s*\d*)\{\/ant\}\s*/g, '* $1 ')
+      // Italic cross-references -> parens
+      .replace(/\{i\}(.+?)\{\/i\}/g, '($1)')
+      // Title blocks
+      .replace(/\{title\}(.+?)\{\/title\}/g, '$1')
+      // Clean remaining markers
+      .replace(/\{\/?\w+\}/g, '')
+
+    // Skip empty after cleanup
+    if (!formatted.trim()) { i++; continue }
+
+    // Antiphons get spacing
+    const isAntiphon = formatted.startsWith('* Ant')
+    // Confiteor / penitential rite get a break before
+    const isPrayerStart = /^(I confess to almighty God|Lord Jesus|God, come to my assistance)/.test(formatted)
+
+    if (isAntiphon || isPrayerStart) {
+      result.push({ text: '', pageBreak: false })
+    }
+
+    result.push({ text: formatted, pageBreak: false })
+
+    if (isAntiphon) {
+      result.push({ text: '', pageBreak: false })
+    }
+
+    i++
+  }
+
+  return result
 }
 
 function paginateSections(sections: PrayerSection[]): string[] {
-  const allLines: string[] = []
+  // Build all formatted lines with page break markers
+  const entries: { text: string; pageBreak: boolean }[] = []
 
   for (const section of sections) {
     if (section.label) {
-      allLines.push('')
-      allLines.push(`== ${section.label} ==`)
-      allLines.push('')
+      entries.push({ text: '', pageBreak: false })
+      entries.push({ text: `== ${section.label} ==`, pageBreak: true })
+      entries.push({ text: '', pageBreak: false })
     }
 
     const rawLines = section.text
       .split('\n')
       .map(l => l.trim())
       .filter(l => l.length > 0)
-      .map(l => formatLine(l))
 
-    for (const raw of rawLines) {
-      // Add blank line before antiphons for visual separation
-      if (raw.startsWith('\u2726 ') || raw.startsWith('* Ant')) {
-        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
-          allLines.push('')
-        }
+    entries.push(...formatLines(rawLines))
+  }
+
+  // Paginate — respect page breaks and LINES_PER_PAGE limit
+  const pages: string[] = []
+  let currentPage: string[] = []
+
+  for (const entry of entries) {
+    if (entry.pageBreak && currentPage.some(l => l.trim().length > 0)) {
+      // Flush current page
+      pages.push(currentPage.join('\n'))
+      currentPage = []
+    }
+
+    const wrapped = entry.text === '' ? [''] : wordWrap(entry.text, CHARS_PER_LINE)
+    for (const wline of wrapped) {
+      if (currentPage.length >= LINES_PER_PAGE && currentPage.some(l => l.trim().length > 0)) {
+        pages.push(currentPage.join('\n'))
+        currentPage = []
       }
-      // Add blank line before section-like headings
-      if (raw.startsWith('-- ') && raw.endsWith(' --')) {
-        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
-          allLines.push('')
-        }
-      }
-      // Add blank line before bracketed instructions
-      if (raw.startsWith('[') && raw.endsWith(']') && raw.length < 60) {
-        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
-          allLines.push('')
-        }
-      }
-      // Add blank line before the Confiteor / penitential rite
-      if (raw.startsWith('I confess to almighty God') ||
-          raw.startsWith('Lord Jesus') ||
-          raw.startsWith('Lord, have mercy') ||
-          raw.startsWith('God, come to my assistance')) {
-        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
-          allLines.push('')
-        }
-      }
-      // Add blank line before response lines for readability
-      if (raw.startsWith('R/ ') && allLines.length > 0 && allLines[allLines.length - 1] !== '') {
-        // Don't add break if previous line was also a response
-        const prev = allLines[allLines.length - 1]
-        if (!prev.startsWith('R/ ')) {
-          allLines.push('')
-        }
-      }
-      allLines.push(...wordWrap(raw, CHARS_PER_LINE))
-      // Add blank line after antiphons
-      if (raw.startsWith('\u2726 ') || raw.startsWith('* Ant')) {
-        allLines.push('')
-      }
+      currentPage.push(wline)
     }
   }
 
-  const pages: string[] = []
-  for (let i = 0; i < allLines.length; i += LINES_PER_PAGE) {
-    const pageLines = allLines.slice(i, i + LINES_PER_PAGE)
-    pages.push(pageLines.join('\n'))
+  // Flush remaining
+  if (currentPage.some(l => l.trim().length > 0)) {
+    pages.push(currentPage.join('\n'))
   }
 
   return pages.length > 0 ? pages : ['(empty)']
