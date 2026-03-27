@@ -13,6 +13,8 @@ const ALL_HOURS = [
   { key: 'midafternoon-prayer', label: 'Midafternoon Prayer' },
   { key: 'evening-prayer', label: 'Evening Prayer' },
   { key: 'night-prayer', label: 'Night Prayer' },
+  { key: 'yesterday\'s-evening-prayer', label: 'Yesterday\'s Evening Prayer' },
+  { key: 'yesterday\'s-night-prayer', label: 'Yesterday\'s Night Prayer' },
 ]
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -102,25 +104,6 @@ app.innerHTML = `
         <span class="setting-label">Seconds per page</span>
         <input id="scroll-speed-input" class="setting-input" type="number" min="2" max="60" step="1" value="${settings.autoScrollSeconds}" style="width:70px" />
       </div>
-      <div class="setting-row">
-        <span class="setting-label">Font size (px)</span>
-        <input id="font-size-input" class="setting-input" type="number" min="10" max="28" step="1" value="${settings.fontSize}" style="width:70px" />
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Font weight</span>
-        <input id="font-weight-input" class="setting-input" type="number" min="100" max="900" step="50" value="${settings.fontWeight}" style="width:70px" />
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Letter spacing (px)</span>
-        <input id="letter-spacing-input" class="setting-input" type="number" min="0" max="3" step="0.1" value="${settings.letterSpacing}" style="width:70px" />
-      </div>
-      <div class="setting-row">
-        <span class="setting-label">Display columns</span>
-        <select id="display-cols-select" class="setting-select">
-          <option value="1" ${settings.displayColumns === 1 ? 'selected' : ''}>1 (narrow, tall)</option>
-          <option value="2" ${settings.displayColumns === 2 ? 'selected' : ''}>2 (wide)</option>
-        </select>
-      </div>
       <div>
         <span class="setting-label">Visible hours</span>
         <div id="hour-toggles" class="hour-toggle-grid">
@@ -167,10 +150,6 @@ const nextBtn = document.querySelector<HTMLButtonElement>('#next-btn')!
 const stopReadingBtn = document.querySelector<HTMLButtonElement>('#stop-reading-btn')!
 const scrollModeSelect = document.querySelector<HTMLSelectElement>('#scroll-mode-select')!
 const scrollSpeedInput = document.querySelector<HTMLInputElement>('#scroll-speed-input')!
-const fontSizeInput = document.querySelector<HTMLInputElement>('#font-size-input')!
-const fontWeightInput = document.querySelector<HTMLInputElement>('#font-weight-input')!
-const letterSpacingInput = document.querySelector<HTMLInputElement>('#letter-spacing-input')!
-const displayColsSelect = document.querySelector<HTMLSelectElement>('#display-cols-select')!
 const hourToggles = document.querySelector<HTMLDivElement>('#hour-toggles')!
 const logEl = document.querySelector<HTMLPreElement>('#event-log')!
 const clearLogBtn = document.querySelector<HTMLButtonElement>('#clear-log-btn')!
@@ -220,8 +199,11 @@ function appendLog(text: string): void {
 function renderHourButtons(hours: HourInfo[]): void {
   const settings = loadSettings()
   hourGrid.innerHTML = hours
-    .filter(h => !settings.hiddenHours.includes(h.slug))
-    .map(h => `<button class="hour-btn" data-slug="${h.slug}" type="button">${h.name}</button>`)
+    .filter(h => {
+      const nameKey = (h.name || '').toLowerCase().replace(/\s+/g, '-').replace(/yesterday's-/, '')
+      return !settings.hiddenHours.includes(nameKey)
+    })
+    .map(h => `<button class="hour-btn" data-slug="${h.slug}" data-date="${(h as any).date || ''}" type="button">${h.name}</button>`)
     .join('')
 }
 
@@ -313,43 +295,6 @@ scrollSpeedInput.addEventListener('change', () => {
   }
 })
 
-fontSizeInput.addEventListener('change', () => {
-  const val = Number(fontSizeInput.value)
-  if (val >= 10 && val <= 28) {
-    const s = loadSettings()
-    s.fontSize = val
-    saveSettings(s)
-    appendLog(`Font size: ${val}px`)
-  }
-})
-
-fontWeightInput.addEventListener('change', () => {
-  const val = Number(fontWeightInput.value)
-  if (val >= 100 && val <= 900) {
-    const s = loadSettings()
-    s.fontWeight = val
-    saveSettings(s)
-    appendLog(`Font weight: ${val}`)
-  }
-})
-
-letterSpacingInput.addEventListener('change', () => {
-  const val = Number(letterSpacingInput.value)
-  if (val >= 0 && val <= 3) {
-    const s = loadSettings()
-    s.letterSpacing = val
-    saveSettings(s)
-    appendLog(`Letter spacing: ${val}px`)
-  }
-})
-
-displayColsSelect.addEventListener('change', () => {
-  const val = Number(displayColsSelect.value) as 1 | 2
-  const s = loadSettings()
-  s.displayColumns = val
-  saveSettings(s)
-  appendLog(`Display columns: ${val}`)
-})
 
 hourToggles.addEventListener('change', () => {
   const checkboxes = hourToggles.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')

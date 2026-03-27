@@ -319,7 +319,12 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
   function visibleHours(): HourInfo[] {
     const settings = loadSettings()
-    return state.hours.filter(h => !settings.hiddenHours.includes(h.slug))
+    return state.hours.filter(h => {
+      // Match hidden hours by name (e.g. "midday-prayer" matches "Midday Prayer")
+      const nameKey = (h.name || '').toLowerCase().replace(/\s+/g, '-')
+        .replace(/yesterday's-/, '') // "Yesterday's Night Prayer" -> "night-prayer"
+      return !settings.hiddenHours.includes(nameKey)
+    })
   }
 
   function progressStr(): string {
