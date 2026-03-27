@@ -81,7 +81,7 @@ const INTRO_JUNK = [
   /consider an examination/i,
   /best make use of our time/i,
   /\[highlight\]/i,
-  /\[\.?\]/,
+  /\[\.?\]$/,
   /^\[Night Prayer/i,
   /^\[Morning Prayer/i,
   /^\[Evening Prayer/i,
@@ -90,6 +90,11 @@ const INTRO_JUNK = [
   /^\[Midday Prayer/i,
   /^\[Midafternoon Prayer/i,
   /^\[Invitatory/i,
+  /^\{r\}Sacred Silence/i,
+  /^Sacred Silence/i,
+  /indicated by a bell/i,
+  /full resonance of the voice/i,
+  /unite our personal prayer/i,
 ]
 
 function isIntroJunk(line: string): boolean {
@@ -115,24 +120,30 @@ function formatLines(rawLines: string[]): { text: string; pageBreak: boolean }[]
     // Strip intro junk
     if (isIntroJunk(line)) { i++; continue }
 
-    // Detect psalm/canticle title patterns:
-    //   Pattern A (single line): {r}Psalm 16 - subtitle{/r}
-    //   Pattern B (split across lines):
-    //     {r}Psalm 16
-    //     God is my portion, my inheritance{/r}
-    //   Followed optionally by: {i}cross-reference{/i} (Book X:Y).
+    // Detect psalm/canticle/scripture title patterns:
+    //   {r}Psalm 16\nsubtitle{/r}      (psalm)
+    //   {r}Luke 2:29-32{/r}            (canticle scripture ref)
+    //   {r}Luke 1:68 79\nsubtitle{/r}  (canticle scripture ref + subtitle)
+    //   {r}Canticle – Isaiah 45{/r}    (canticle with source)
+    //   Hebrews 2:9-10                 (bare reading reference)
+    const TITLE_PATTERN = /^(?:Psalm|Canticle|Luke|Isaiah|Jeremiah|Daniel|Exodus|Deuteronomy|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|See\s)/i
+    const SCRIPTURE_REF = /^[1-3]?\s?[A-Z][a-z]+\s+\d+[:\d\s,\-a-z]*$/
 
-    // Pattern A: complete on one line
-    const titleMatchA = line.match(/^\{r\}((?:Psalm|Canticle)\s+[^{]*)\{\/r\}$/i)
-    // Pattern B: opening {r} with psalm/canticle, no closing
-    const titleMatchB = line.match(/^\{r\}((?:Psalm|Canticle)\s+\d+[^{]*)$/i)
+    // Pattern A: complete on one line with {r}
+    const titleMatchA = line.match(/^\{r\}((?:Psalm|Canticle|Luke|Isaiah|Daniel|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|Jeremiah|Deuteronomy|Exodus|See\s)[^{]*)\{\/r\}$/i)
+    // Pattern B: opening {r} with title, no closing (continues on next line)
+    const titleMatchB = line.match(/^\{r\}((?:Psalm|Canticle|Luke|Isaiah|Daniel|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|Jeremiah|Deuteronomy|Exodus|See\s)[^{]*)$/i)
+    // Pattern C: bare scripture reference at start of reading (no {r} markers)
+    const titleMatchC = !line.includes('{') && SCRIPTURE_REF.test(line.trim()) ? line.trim() : null
 
-    if (titleMatchA || titleMatchB) {
+    if (titleMatchA || titleMatchB || titleMatchC) {
       let title: string
       let subtitle = ''
 
-      if (titleMatchA) {
-        // May contain title + subtitle separated by newline within the {r} block
+      if (titleMatchC) {
+        // Bare scripture reference (reading)
+        title = titleMatchC
+      } else if (titleMatchA) {
         const parts = titleMatchA[1].trim().split('\n').map(p => p.trim()).filter(Boolean)
         title = parts[0]!
         subtitle = parts.slice(1).join(' ')
@@ -149,11 +160,13 @@ function formatLines(rawLines: string[]): { text: string; pageBreak: boolean }[]
         }
       }
 
-      // Check if next line is also a red subtitle
+      // Check if next line is also a red subtitle (e.g. {i}{r}The soul rejoices{/r}{/i})
       if (!subtitle && i + 1 < rawLines.length) {
-        const nextMatch = rawLines[i + 1]!.match(/^\{r\}(.+?)\{\/r\}$/)
-        if (nextMatch && !/^(HYMN|PSALMODY|READING|RESPONSORY|INTERCESSIONS|CONCLUDING|DISMISSAL|CANTICLE OF)/i.test(nextMatch[1])) {
-          subtitle = nextMatch[1].trim()
+        const nextLine = rawLines[i + 1]!
+        // Match {r}subtitle{/r} or {i}{r}subtitle{/r}{/i} or {i}subtitle{/i}
+        const subMatch = nextLine.match(/^\{[ri]\}(?:\{[ri]\})?(.+?)(?:\{\/[ri]\})?\{\/[ri]\}$/)
+        if (subMatch && !/^(HYMN|PSALMODY|READING|RESPONSORY|INTERCESSIONS|CONCLUDING|DISMISSAL|CANTICLE OF|Sacred Silence)/i.test(subMatch[1])) {
+          subtitle = subMatch[1].trim()
           i++
         }
       }
@@ -233,10 +246,17 @@ function paginateSections(sections: PrayerSection[]): string[] {
   const entries: { text: string; pageBreak: boolean }[] = []
 
   for (const section of sections) {
-    if (section.label) {
+    // For canticle sections, the label (e.g. "CANTICLE OF SIMEON") becomes
+    // part of the title header — the scripture ref in the body takes over
+    const isCanticleSection = /^canticle of/i.test(section.label || '')
+    if (section.label && !isCanticleSection) {
       entries.push({ text: '', pageBreak: false })
       entries.push({ text: `== ${section.label} ==`, pageBreak: true })
       entries.push({ text: '', pageBreak: false })
+    }
+    if (isCanticleSection) {
+      // Insert the canticle name as a page-breaking title
+      entries.push({ text: section.label, pageBreak: true })
     }
 
     const rawLines = section.text
