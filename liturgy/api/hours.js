@@ -22,6 +22,8 @@ const KNOWN_HOURS = [
   'evening prayer', 'night prayer',
 ]
 
+const DAY_ABBREVS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
 function parseHours(html) {
   const hours = []
   const linkRegex = /href="(https?:\/\/divineoffice\.org\/([^/?]+)[^"]*\?date=(\d+)[^"]*)"/g
@@ -47,19 +49,36 @@ function parseHours(html) {
   return hours
 }
 
-function prevDate(dateStr) {
-  const y = parseInt(dateStr.slice(0, 4))
-  const m = parseInt(dateStr.slice(4, 6)) - 1
-  const d = parseInt(dateStr.slice(6, 8))
-  const prev = new Date(y, m, d - 1)
-  return `${prev.getFullYear()}${String(prev.getMonth() + 1).padStart(2, '0')}${String(prev.getDate()).padStart(2, '0')}`
+/**
+ * Rewrite slugs to match the target date's day-of-week.
+ * e.g. if slugs say "fri" but target date is Thursday, swap fri→thu.
+ */
+function rewriteSlugsForDate(hours, targetDate) {
+  const y = parseInt(targetDate.slice(0, 4))
+  const m = parseInt(targetDate.slice(4, 6)) - 1
+  const d = parseInt(targetDate.slice(6, 8))
+  const targetDay = DAY_ABBREVS[new Date(y, m, d).getDay()]
+
+  return hours.map(h => {
+    let newSlug = h.slug
+    // Find which day abbreviation is in the slug
+    for (const day of DAY_ABBREVS) {
+      // Match day abbreviation as a whole segment (between hyphens)
+      const pattern = new RegExp(`(^|-)${day}(-|$)`)
+      if (pattern.test(newSlug) && day !== targetDay) {
+        newSlug = newSlug.replace(pattern, `$1${targetDay}$2`)
+        break
+      }
+    }
+    return { ...h, slug: newSlug, date: targetDate }
+  })
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=300')
 
-  // Frontend sends its local date + timezone offset
+  // Compute user's local date from timezone offset
   const tzOffset = parseInt(req.query.tz || '0', 10)
   const now = new Date()
   const localNow = new Date(now.getTime() - tzOffset * 60000)
@@ -69,35 +88,18 @@ export default async function handler(req, res) {
   try {
     const html = await fetchUrl(`https://divineoffice.org/?date=${requestedDate}`)
 
-    // Get server's date from the page
-    const serverDateMatch = html.match(/data-server-time="(\d{8})"/)
-    const serverDate = serverDateMatch ? serverDateMatch[1] : null
-
     let hours = parseHours(html)
 
-    // If all links point to a different date than requested (the liturgical
-    // day shifted after Vespers), also try fetching yesterday's page
-    const allLinksSameDate = hours.length > 0 && hours.every(h => h.linkDate === hours[0].linkDate)
-    if (allLinksSameDate && hours[0].linkDate !== requestedDate) {
-      // The site is showing tomorrow's office. Try fetching yesterday to
-      // get today's slugs.
-      try {
-        const prevHtml = await fetchUrl(`https://divineoffice.org/?date=${prevDate(requestedDate)}`)
-        const prevHours = parseHours(prevHtml)
-        // If yesterday's page has links matching our requested date, use those
-        const matchingHours = prevHours.filter(h => h.linkDate === requestedDate)
-        if (matchingHours.length > 0) {
-          hours = matchingHours
-        }
-      } catch {
-        // Fall through to the original hours
-      }
+    // If the links point to a different date than requested,
+    // rewrite the day-of-week in each slug to match the requested date
+    const linksDifferent = hours.length > 0 && hours[0].linkDate !== requestedDate
+    if (linksDifferent) {
+      hours = rewriteSlugsForDate(hours, requestedDate)
     }
 
     res.json({
       date: requestedDate,
-      serverDate,
-      hours: hours.map(h => ({ slug: h.slug, name: h.name, date: h.linkDate })),
+      hours: hours.map(h => ({ slug: h.slug, name: h.name, date: h.date || h.linkDate })),
     })
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch hours', detail: err.message })
