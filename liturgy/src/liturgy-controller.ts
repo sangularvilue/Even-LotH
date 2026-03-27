@@ -1,7 +1,5 @@
 import {
   CreateStartUpPageContainer,
-  ImageContainerProperty,
-  ImageRawDataUpdate,
   ListContainerProperty,
   ListItemContainerProperty,
   OsEventTypeList,
@@ -11,12 +9,11 @@ import {
   waitForEvenAppBridge,
   type EvenAppBridge,
 } from '@evenrealities/even_hub_sdk'
-import { withTimeout } from '../../_shared/async'
-import { getRawEventType, normalizeEventType } from '../../_shared/even-events'
+import { withTimeout } from './shared/async'
+import { getRawEventType, normalizeEventType } from './shared/even-events'
 import { fetchHours, fetchHour } from './api-client'
-import { PrayerCanvas, computeTileLayout, type TileLayout } from './prayer-canvas'
 import { loadSettings } from './settings'
-import type { HourInfo, LiturgyPhase } from './types'
+import type { HourInfo, LiturgyPhase, PrayerSection } from './types'
 
 type ControllerDeps = {
   setPhase?: (phase: LiturgyPhase) => void
@@ -36,16 +33,17 @@ type ControllerState = {
   date: string
   hours: HourInfo[]
   selectedHourIndex: number
-  // Image-based scroll state
-  prayerCanvas: PrayerCanvas | null
-  tileLayout: TileLayout | null
-  scrollY: number
-  scrollTimerId: number | null
-  scrollPaused: boolean
-  sending: boolean
+  pages: string[]
+  pageIndex: number
 }
 
 const DISPLAY_WIDTH = 576
+const TEXT_HEIGHT = 256
+const BAR_HEIGHT = 30
+
+// Conservative page sizing â 7 lines of ~50 chars fits safely
+const CHARS_PER_LINE = 50
+const LINES_PER_PAGE = 7
 
 function todayDateStr(): string {
   const d = new Date()
@@ -54,6 +52,53 @@ function todayDateStr(): string {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v))
+}
+
+function wordWrap(text: string, maxWidth: number): string[] {
+  if (text.length <= maxWidth) return [text]
+  const result: string[] = []
+  const words = text.split(' ')
+  let current = ''
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word
+    if (candidate.length > maxWidth && current) {
+      result.push(current)
+      current = word
+    } else {
+      current = candidate
+    }
+  }
+  if (current) result.push(current)
+  return result.length > 0 ? result : [text]
+}
+
+function paginateSections(sections: PrayerSection[]): string[] {
+  const allLines: string[] = []
+
+  for (const section of sections) {
+    if (section.label) {
+      allLines.push('')
+      allLines.push(`â ${section.label} â`)
+      allLines.push('')
+    }
+
+    const rawLines = section.text
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+
+    for (const raw of rawLines) {
+      allLines.push(...wordWrap(raw, CHARS_PER_LINE))
+    }
+  }
+
+  const pages: string[] = []
+  for (let i = 0; i < allLines.length; i += LINES_PER_PAGE) {
+    const pageLines = allLines.slice(i, i + LINES_PER_PAGE)
+    pages.push(pageLines.join('\n'))
+  }
+
+  return pages.length > 0 ? pages : ['(empty)']
 }
 
 export function createLiturgyController({ setPhase, log, onReadingChanged, onHoursLoaded }: ControllerDeps) {
@@ -66,12 +111,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     date: todayDateStr(),
     hours: [],
     selectedHourIndex: 0,
-    prayerCanvas: null,
-    tileLayout: null,
-    scrollY: 0,
-    scrollTimerId: null,
-    scrollPaused: false,
-    sending: false,
+    pages: [],
+    pageIndex: 0,
   }
 
   let currentLayout: 'hours' | 'reading' | 'loading' | null = null
@@ -86,143 +127,101 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     return state.hours.filter(h => !settings.hiddenHours.includes(h.slug))
   }
 
-  function maxScrollY(): number {
-    return state.prayerCanvas?.maxScroll ?? 0
-  }
-
   function progressStr(): string {
-    const max = maxScrollY()
-    if (max <= 0) return '100%'
-    return `${Math.round((state.scrollY / max) * 100)}%`
+    if (state.pages.length <= 1) return '100%'
+    return `${state.pageIndex + 1}/${state.pages.length}`
   }
 
-  // ── Image-based reading ──
+  function progressBar(): string {
+    const barLen = 30
+    const progress = state.pages.length > 1
+      ? (state.pageIndex + 1) / state.pages.length
+      : 1
+    const filled = Math.round(barLen * progress)
+    return '\u2501'.repeat(filled) + '\u2500'.repeat(barLen - filled)
+  }
+
+  // ââ Reading layout ââ
 
   async function setupReadingLayout(): Promise<void> {
     const bridge = state.bridge
-    const layout = state.tileLayout
-    if (!bridge || !layout) return
+    if (!bridge) return
 
     stopSpinner()
 
-    // Center the image grid on the display
-    const gridWidth = layout.cols * layout.tileWidth
-    const gridHeight = layout.rows * layout.tileHeight
-    const offsetX = Math.floor((DISPLAY_WIDTH - gridWidth) / 2)
-    const offsetY = Math.floor((288 - gridHeight) / 2)
+    const page = state.pages[state.pageIndex] ?? ''
 
-    const images: ImageContainerProperty[] = []
-    for (let row = 0; row < layout.rows; row++) {
-      for (let col = 0; col < layout.cols; col++) {
-        const idx = row * layout.cols + col
-        images.push(new ImageContainerProperty({
-          containerID: idx + 1,
-          containerName: `lit-img-${idx}`,
-          xPosition: offsetX + col * layout.tileWidth,
-          yPosition: offsetY + row * layout.tileHeight,
-          width: layout.tileWidth,
-          height: layout.tileHeight,
-        }))
-      }
+    const textContainer = new TextContainerProperty({
+      containerID: 1,
+      containerName: 'lit-reading',
+      content: page,
+      xPosition: 0,
+      yPosition: 0,
+      width: DISPLAY_WIDTH,
+      height: TEXT_HEIGHT,
+      borderWidth: 0,
+      paddingLength: 6,
+      isEventCapture: 1,
+    })
+
+    const footerContainer = new TextContainerProperty({
+      containerID: 2,
+      containerName: 'lit-footer',
+      content: progressBar(),
+      xPosition: 0,
+      yPosition: TEXT_HEIGHT,
+      width: DISPLAY_WIDTH,
+      height: BAR_HEIGHT,
+      borderWidth: 0,
+      paddingLength: 0,
+      isEventCapture: 0,
+    })
+
+    const config = {
+      containerTotalNum: 2,
+      textObject: [textContainer, footerContainer],
     }
 
-    const config: any = {
-      containerTotalNum: layout.totalTiles + (layout.hasEventCapture ? 1 : 0),
-      imageObject: images,
-    }
-
-    if (layout.hasEventCapture) {
-      config.listObject = [new ListContainerProperty({
-        containerID: layout.totalTiles + 1,
-        containerName: 'lit-r-cap',
-        itemContainer: new ListItemContainerProperty({
-          itemCount: 20,
-          itemWidth: 1,
-          isItemSelectBorderEn: 0,
-          itemName: Array.from({ length: 20 }, () => ' '),
-        }),
-        isEventCapture: 1,
-        xPosition: 0,
-        yPosition: 0,
-        width: 1,
-        height: 1,
-      })]
-    }
-
-    if (!state.startupRendered) {
-      await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(config))
-      state.startupRendered = true
-    } else {
-      await bridge.rebuildPageContainer(new RebuildPageContainer(config))
-    }
-    currentLayout = 'reading'
-
-    await sendTiles()
-  }
-
-  async function sendTiles(): Promise<void> {
-    const bridge = state.bridge
-    const canvas = state.prayerCanvas
-    const layout = state.tileLayout
-    if (!bridge || !canvas || !layout) return
-    if (state.sending) return
-
-    state.sending = true
     try {
-      for (let i = 0; i < layout.totalTiles; i++) {
-        const png = await canvas.getTilePng(state.scrollY, i)
-        await bridge.updateImageRawData(new ImageRawDataUpdate({
-          containerID: i + 1,
-          containerName: `lit-img-${i}`,
-          imageData: png,
-        }))
-      }
-    } catch (err) {
-      log(`Image send error: ${err}`)
-    } finally {
-      state.sending = false
-    }
-  }
-
-  // ── Auto-scroll timer ──
-
-  function startScrollTimer(): void {
-    stopScrollTimer()
-    if (state.view !== 'reading') return
-
-    const settings = loadSettings()
-    if (settings.scrollMode !== 'auto') return
-    const layout = state.tileLayout
-    if (!layout) return
-
-    const pxPerSecond = layout.viewportHeight / settings.autoScrollSeconds
-    const INTERVAL_MS = 50
-    const pxPerTick = Math.max(1, Math.round(pxPerSecond * (INTERVAL_MS / 1000)))
-
-    state.scrollTimerId = window.setInterval(() => {
-      if (state.scrollPaused || state.view !== 'reading') return
-
-      const max = maxScrollY()
-      if (state.scrollY < max) {
-        state.scrollY = Math.min(state.scrollY + pxPerTick, max)
-        void sendTiles()
-        onReadingChanged?.('', progressStr())
+      if (!state.startupRendered) {
+        await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(config))
+        state.startupRendered = true
       } else {
-        log('Reached end')
-        state.scrollPaused = true
+        await bridge.rebuildPageContainer(new RebuildPageContainer(config))
       }
-    }, INTERVAL_MS)
-  }
-
-  function stopScrollTimer(): void {
-    if (state.scrollTimerId !== null) {
-      window.clearInterval(state.scrollTimerId)
-      state.scrollTimerId = null
+      currentLayout = 'reading'
+    } catch (err) {
+      log(`setupReadingLayout error: ${err}`)
     }
-    state.scrollPaused = false
   }
 
-  // ── Loading spinner ──
+  async function updatePageText(): Promise<void> {
+    const bridge = state.bridge
+    if (!bridge || currentLayout !== 'reading') return
+
+    const content = state.pages[state.pageIndex] ?? ''
+    const bar = progressBar()
+    try {
+      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+        containerID: 1,
+        containerName: 'lit-reading',
+        contentOffset: 0,
+        contentLength: content.length,
+        content,
+      }))
+      await bridge.textContainerUpgrade(new TextContainerUpgrade({
+        containerID: 2,
+        containerName: 'lit-footer',
+        contentOffset: 0,
+        contentLength: bar.length,
+        content: bar,
+      }))
+    } catch (err) {
+      log(`updatePageText error: ${err}`)
+    }
+  }
+
+  // ââ Loading spinner ââ
 
   function stopSpinner(): void {
     if (spinnerIntervalId !== null) {
@@ -296,7 +295,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }, 250)
   }
 
-  // ── Hour list ──
+  // ââ Hour list ââ
 
   async function renderHourListPage(): Promise<void> {
     const bridge = state.bridge
@@ -352,7 +351,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     currentLayout = 'hours'
   }
 
-  // ── Event handling ──
+  // ââ Event handling ââ
 
   function registerEventLoop(bridge: EvenAppBridge): void {
     if (state.eventLoopRegistered) return
@@ -383,7 +382,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       if (state.view === 'hours') {
         await onHourListEvent(eventType, incomingIndex)
       } else if (state.view === 'reading') {
-        onReadingEvent(eventType)
+        await onReadingEvent(eventType)
       }
     })
 
@@ -424,22 +423,13 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
         stopSpinner()
 
-        const settings = loadSettings()
-        const layout = computeTileLayout(settings.displayColumns)
-        state.tileLayout = layout
-        state.prayerCanvas = new PrayerCanvas(content.sections, {
-          fontSize: settings.fontSize,
-          fontWeight: settings.fontWeight,
-          letterSpacing: settings.letterSpacing,
-        }, layout)
-        state.scrollY = 0
-        state.scrollPaused = false
+        state.pages = paginateSections(content.sections)
+        state.pageIndex = 0
         state.view = 'reading'
         publishPhase('reading')
-        log(`${hour.name}: ${layout.canvasWidth}×${state.prayerCanvas.totalHeight}px, ${layout.cols}col`)
+        log(`${hour.name}: ${state.pages.length} pages`)
 
         await setupReadingLayout()
-        startScrollTimer()
       } catch (err) {
         stopSpinner()
         log(`Error: ${err}`)
@@ -450,49 +440,47 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
-  function onReadingEvent(eventType: number | undefined): void {
+  async function onReadingEvent(eventType: number | undefined): Promise<void> {
     if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
-      stopScrollTimer()
-      state.prayerCanvas = null
-      state.tileLayout = null
-      state.scrollY = 0
+      state.pages = []
+      state.pageIndex = 0
       state.view = 'hours'
       onReadingChanged?.('', '')
       publishPhase(state.mode === 'mock' ? 'mock' : 'connected')
       log('Back to hour list')
-      void renderHourListPage()
+      await renderHourListPage()
       return
     }
 
+    // Tap advances to next page
     if (eventType === OsEventTypeList.CLICK_EVENT) {
-      const settings = loadSettings()
-      if (settings.scrollMode === 'auto') {
-        state.scrollPaused = !state.scrollPaused
-        log(state.scrollPaused ? 'Paused' : 'Resumed')
+      if (state.pageIndex < state.pages.length - 1) {
+        state.pageIndex++
+        await updatePageText()
+        onReadingChanged?.('', progressStr())
+      } else {
+        log('Reached end')
       }
       return
     }
 
-    const vpHeight = state.tileLayout?.viewportHeight ?? 200
-    const SCROLL_STEP = vpHeight / 4
-
+    // Swipe scrolls pages
     if (eventType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      const max = maxScrollY()
-      if (state.scrollY < max) {
-        state.scrollY = Math.min(state.scrollY + SCROLL_STEP, max)
-        void sendTiles()
+      if (state.pageIndex < state.pages.length - 1) {
+        state.pageIndex++
+        await updatePageText()
         onReadingChanged?.('', progressStr())
       }
     } else if (eventType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      if (state.scrollY > 0) {
-        state.scrollY = Math.max(state.scrollY - SCROLL_STEP, 0)
-        void sendTiles()
+      if (state.pageIndex > 0) {
+        state.pageIndex--
+        await updatePageText()
         onReadingChanged?.('', progressStr())
       }
     }
   }
 
-  // ── Public API ──
+  // ââ Public API ââ
 
   async function connect(): Promise<void> {
     publishPhase('connecting')
@@ -557,23 +545,14 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       stopSpinner()
 
-      const settings = loadSettings()
-      const layout = computeTileLayout(settings.displayColumns)
-      state.tileLayout = layout
-      state.prayerCanvas = new PrayerCanvas(content.sections, {
-        fontSize: settings.fontSize,
-        fontWeight: settings.fontWeight,
-        letterSpacing: settings.letterSpacing,
-      }, layout)
-      state.scrollY = 0
-      state.scrollPaused = false
+      state.pages = paginateSections(content.sections)
+      state.pageIndex = 0
       state.view = 'reading'
       publishPhase('reading')
-      log(`${content.name}: ${layout.canvasWidth}×${state.prayerCanvas.totalHeight}px, ${layout.cols}col`)
+      log(`${content.name}: ${state.pages.length} pages`)
 
       if (state.bridge) {
         await setupReadingLayout()
-        startScrollTimer()
       }
     } catch (err) {
       stopSpinner()
@@ -582,33 +561,10 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
-  function scrollDown(): void {
-    const vpHeight = state.tileLayout?.viewportHeight ?? 200
-    const SCROLL_STEP = vpHeight / 4
-    const max = maxScrollY()
-    if (state.scrollY < max) {
-      state.scrollY = Math.min(state.scrollY + SCROLL_STEP, max)
-      if (state.bridge) void sendTiles()
-      onReadingChanged?.('', progressStr())
-    }
-  }
-
-  function scrollUp(): void {
-    const vpHeight = state.tileLayout?.viewportHeight ?? 200
-    const SCROLL_STEP = vpHeight / 4
-    if (state.scrollY > 0) {
-      state.scrollY = Math.max(state.scrollY - SCROLL_STEP, 0)
-      if (state.bridge) void sendTiles()
-      onReadingChanged?.('', progressStr())
-    }
-  }
-
   function stopReading(): void {
-    stopScrollTimer()
     stopSpinner()
-    state.prayerCanvas = null
-    state.tileLayout = null
-    state.scrollY = 0
+    state.pages = []
+    state.pageIndex = 0
     state.view = 'hours'
     onReadingChanged?.('', '')
     publishPhase(state.mode === 'mock' ? 'mock' : state.mode === 'bridge' ? 'connected' : 'idle')
@@ -620,8 +576,6 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     connect,
     loadHours,
     selectHour,
-    scrollDown,
-    scrollUp,
     stopReading,
     getState: () => ({ ...state }),
   }

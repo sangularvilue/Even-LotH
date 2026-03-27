@@ -36,6 +36,7 @@ export type DisplayColumns = 1 | 2
 export type LiturgySettings = {
   scrollMode: ScrollMode
   autoScrollSeconds: number
+  tapToAdvance: boolean
   hiddenHours: string[]
   fontSize: number
   fontWeight: number

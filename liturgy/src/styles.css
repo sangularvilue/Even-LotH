@@ -1,5 +1,5 @@
 @import "../node_modules/@jappyjan/even-realities-ui/dist/even-realities-ui.css";
-@import "../../_shared/styles.css";
+@import "./shared/styles.css";
 
 :root {
   color-scheme: light;

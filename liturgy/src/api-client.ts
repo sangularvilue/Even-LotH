@@ -1,6 +1,6 @@
 import type { HoursIndex, HourContent } from './types'
 
-const SERVER_URL = 'http://localhost:3210'
+const SERVER_URL = ''
 
 export async function fetchHours(date: string): Promise<HoursIndex> {
   const res = await fetch(`${SERVER_URL}/api/hours?date=${date}`)

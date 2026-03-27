@@ -1,4 +1,20 @@
 import { defineConfig } from 'vite'
-import { createStandaloneViteConfig } from '../_shared/standalone-vite'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-export default defineConfig(createStandaloneViteConfig(import.meta.url, 5179))
+const appRoot = dirname(fileURLToPath(import.meta.url))
+
+export default defineConfig({
+  root: appRoot,
+  server: {
+    host: '0.0.0.0',
+    port: 5179,
+    fs: {
+      allow: [resolve(appRoot, '..')],
+    },
+  },
+  build: {
+    outDir: resolve(appRoot, 'dist'),
+    emptyOutDir: true,
+  },
+})

@@ -1,9 +1,9 @@
 import type { DisplayColumns, PrayerSection } from './types'
 
-// ── Tile layout ──
-// Image containers: max 200×100 each, max 4 containers per page.
-// 1 column:  1×3 grid (200×288) + 1 event-capture list = 4 containers
-// 2 columns: 2×2 grid (400×200) = 4 containers (no event capture; phone controls only)
+// ââ Tile layout ââ
+// Image containers: max 200Ã100 each, max 4 containers per page.
+// 1 column:  1Ã3 grid (200Ã288) + 1 event-capture list = 4 containers
+// 2 columns: 2Ã2 grid (400Ã200) = 4 containers (no event capture; phone controls only)
 
 export const MAX_TILE_WIDTH = 200
 export const MAX_TILE_HEIGHT = 100
@@ -21,8 +21,8 @@ export type TileLayout = {
 
 export function computeTileLayout(columns: DisplayColumns): TileLayout {
   if (columns === 2) {
-    // 2×2 grid = 400×200, all 4 slots used by images.
-    // Gestures still work — onEvenHubEvent fires on the bridge regardless.
+    // 2Ã2 grid = 400Ã200, all 4 slots used by images.
+    // Gestures still work â onEvenHubEvent fires on the bridge regardless.
     return {
       cols: 2, rows: 2,
       tileWidth: 200, tileHeight: 100,
@@ -30,7 +30,7 @@ export function computeTileLayout(columns: DisplayColumns): TileLayout {
       totalTiles: 4, hasEventCapture: false,
     }
   }
-  // 1×3 grid = 200×288, 3 images + 1 event list (belt-and-suspenders)
+  // 1Ã3 grid = 200Ã288, 3 images + 1 event list (belt-and-suspenders)
   return {
     cols: 1, rows: 3,
     tileWidth: 200, tileHeight: 96,
@@ -49,14 +49,14 @@ export type FontSettings = {
   letterSpacing: number
 }
 
-// ── Line model ──
+// ââ Line model ââ
 
 type DisplayLine = {
   text: string
   type: 'text' | 'section' | 'blank'
 }
 
-// ── Pre-render all prayer text onto a tall off-screen canvas ──
+// ââ Pre-render all prayer text onto a tall off-screen canvas ââ
 
 export class PrayerCanvas {
   private canvas: HTMLCanvasElement
@@ -73,7 +73,7 @@ export class PrayerCanvas {
     const charsPerLine = Math.floor(textWidth / (font.fontSize * 0.52))
     const lines = buildDisplayLines(sections, charsPerLine)
 
-    const topPad = layout.viewportHeight
+    const topPad = 0
     const bottomPad = layout.viewportHeight
     this.totalHeight = topPad + lines.length * lineHeight + bottomPad
 
@@ -114,7 +114,7 @@ export class PrayerCanvas {
 
   /**
    * Extract one tile as a PNG ArrayBuffer.
-   * tileIndex: linear index (row-major). For 2×2: 0=TL, 1=TR, 2=BL, 3=BR.
+   * tileIndex: linear index (row-major). For 2Ã2: 0=TL, 1=TR, 2=BL, 3=BR.
    */
   async getTilePng(scrollY: number, tileIndex: number): Promise<ArrayBuffer> {
     const { cols, tileWidth, tileHeight } = this.layout
@@ -144,7 +144,7 @@ export class PrayerCanvas {
   }
 }
 
-// ── Text → display lines ──
+// ââ Text â display lines ââ
 
 function buildDisplayLines(sections: PrayerSection[], charsPerLine: number): DisplayLine[] {
   const lines: DisplayLine[] = []
@@ -152,7 +152,7 @@ function buildDisplayLines(sections: PrayerSection[], charsPerLine: number): Dis
   for (const section of sections) {
     if (section.label) {
       lines.push({ text: '', type: 'blank' })
-      lines.push({ text: `— ${section.label} —`, type: 'section' })
+      lines.push({ text: `â ${section.label} â`, type: 'section' })
       lines.push({ text: '', type: 'blank' })
     }
 

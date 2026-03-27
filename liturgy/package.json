@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5179",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "serve": "cd server && npm run serve"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.7",
-    "@jappyjan/even-realities-ui": "^0.0.8"
+    "@jappyjan/even-realities-ui": "^0.0.8",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

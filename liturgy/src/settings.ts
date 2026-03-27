@@ -5,6 +5,7 @@ const STORAGE_KEY = 'even.liturgy.settings.v1'
 const DEFAULTS: LiturgySettings = {
   scrollMode: 'manual',
   autoScrollSeconds: 8,
+  tapToAdvance: true,
   hiddenHours: [],
   fontSize: 16,
   fontWeight: 100,
@@ -21,6 +22,7 @@ export function loadSettings(): LiturgySettings {
       scrollMode: parsed.scrollMode === 'auto' ? 'auto' : 'manual',
       autoScrollSeconds: typeof parsed.autoScrollSeconds === 'number' && parsed.autoScrollSeconds > 0
         ? parsed.autoScrollSeconds : DEFAULTS.autoScrollSeconds,
+      tapToAdvance: typeof parsed.tapToAdvance === 'boolean' ? parsed.tapToAdvance : DEFAULTS.tapToAdvance,
       hiddenHours: Array.isArray(parsed.hiddenHours) ? parsed.hiddenHours : [],
       fontSize: typeof parsed.fontSize === 'number' && parsed.fontSize >= 10 && parsed.fontSize <= 28
         ? parsed.fontSize : DEFAULTS.fontSize,

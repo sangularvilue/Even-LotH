@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/hours", "destination": "/api/hours" },
+    { "source": "/api/hour/:slug*", "destination": "/api/hour?slug=$1" }
+  ]
+}

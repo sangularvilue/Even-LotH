@@ -5,16 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "serve": "tsx src/serve.ts"
   },
   "dependencies": {
     "express": "^4.21.0",
     "cors": "^2.8.5",
-    "node-html-parser": "^6.1.13"
+    "node-html-parser": "^6.1.13",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/cors": "^2.8.17",
+    "@types/qrcode": "^1.5.5",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }

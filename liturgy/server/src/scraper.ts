@@ -17,11 +17,12 @@ export async function fetchHoursIndex(date: string): Promise<HourInfo[]> {
     const href = link.getAttribute('href') ?? ''
     const text = link.textContent.trim()
 
-    if (!href.includes(`?date=${date}`) && !href.includes(`&date=${date}`)) continue
-    if (href.includes('divineoffice.org/?date=')) continue
-
+    // Must be a divineoffice.org prayer page link (not the homepage)
     const slugMatch = href.match(/divineoffice\.org\/([^/?]+)/)
     if (!slugMatch) continue
+
+    // Must have a date parameter (any date â the site uses liturgical dates internally)
+    if (!href.includes('?date=') && !href.includes('&date=')) continue
 
     const slug = slugMatch[1]
     const name = text || slug
@@ -36,7 +37,8 @@ export async function fetchHoursIndex(date: string): Promise<HourInfo[]> {
     const nameLower = name.toLowerCase()
     if (!knownHours.some(kh => nameLower.includes(kh))) continue
 
-    hours.push({ slug, name })
+    // Rewrite the link to use the requested date
+    hours.push({ slug, name: name.replace(/^[A-Z][a-z]+ \d+,\s*/, '') })
   }
 
   return hours
@@ -61,7 +63,7 @@ function classifySection(text: string): { type: string; label: string } {
   return { type: 'text', label: clean }
 }
 
-// ── Rubric patterns: things not read aloud → wrap in _italics_ ──
+// ââ Rubric patterns: things not read aloud â wrap in _italics_ ââ
 
 // Red spans contain rubrics (antiphon labels, section headers, response dashes, instructions)
 // We convert them to _italic_ markers before stripping HTML.
@@ -81,7 +83,7 @@ function isRubricText(text: string): boolean {
   return RUBRIC_PATTERNS.some(re => re.test(t))
 }
 
-// ── Junk to strip completely ──
+// ââ Junk to strip completely ââ
 
 const JUNK_LINE_PATTERNS = [
   /^https?:\/\//,                          // URLs
@@ -92,7 +94,7 @@ const JUNK_LINE_PATTERNS = [
   /^Proper of Seasons:\s*\d/i,
   /^Psalter:.*/i,
   /^Sacred Silence\s*\(indicated/i,        // Sacred silence instruction paragraph
-  /^—\s*a moment to reflect/i,
+  /^â\s*a moment to reflect/i,
   // Credits/attribution lines
   /^"[^"]*"\s*by\s/i,                     // "Title" by Artist
   /^Title:/i,
@@ -103,7 +105,7 @@ const JUNK_LINE_PATTERNS = [
   /^Tune:/i,
   /^Source:/i,
   /^Copyright/i,
-  /^©/,
+  /^Â©/,
   /^All rights reserved/i,
   /^Music:/i,
   /^Words:/i,
@@ -117,7 +119,7 @@ const JUNK_LINE_PATTERNS = [
   /^Lenten offering/i,
   /^helps carry this prayer/i,
   /^Thank you for praying with us/i,
-  /^↑$/,
+  /^â$/,
   /^to top$/i,
   // CSS rules that leak through from WordPress
   /^\.stc-/,
@@ -187,16 +189,16 @@ function isJunkLine(line: string): boolean {
   if (!t) return false
   if (JUNK_LINE_PATTERNS.some(re => re.test(t))) return true
   // Generic CSS property detection: "word-word: value;" pattern
-  if (/^[a-z][-a-z]*\s*:\s*.+[;,]?\s*$/i.test(t) && t.length < 120 && !t.includes('—')) return true
+  if (/^[a-z][-a-z]*\s*:\s*.+[;,]?\s*$/i.test(t) && t.length < 120 && !t.includes('â')) return true
   // Credit/attribution block: contains bullet-separated metadata fields
   if (/Title:.*Composer:/i.test(t) || /Artist:.*Used with/i.test(t)) return true
-  if (/•\s*Title:/i.test(t)) return true
+  if (/â¢\s*Title:/i.test(t)) return true
   // Lines that are entirely a "quoted title" by Someone
   if (/^"[^"]+"\s+by\s+.+/i.test(t)) return true
   return false
 }
 
-// ── Main content extraction ──
+// ââ Main content extraction ââ
 
 export async function fetchHourContent(slug: string, date: string): Promise<HourContent> {
   const url = `${BASE_URL}/${slug}/?date=${date}`
@@ -225,13 +227,13 @@ export async function fetchHourContent(slug: string, date: string): Promise<Hour
     (_match, inner) => {
       const text = inner.replace(/<[^>]*>/g, '').trim()
       if (!text) return ''
-      // Section headings — leave as-is (will become section labels)
+      // Section headings â leave as-is (will become section labels)
       if (SECTION_KEYWORDS.some(kw => text.toUpperCase() === kw || text.toUpperCase().startsWith(kw + ' '))) {
         return text
       }
       // Em-dash response markers
-      if (text === '—' || text === '\u2014' || text === '&#8212;') return '— '
-      // All other red text (rubrics, instructions) — keep plain
+      if (text === 'â' || text === '\u2014' || text === '&#8212;') return 'â '
+      // All other red text (rubrics, instructions) â keep plain
       return text
     }
   )
@@ -262,7 +264,7 @@ export async function fetchHourContent(slug: string, date: string): Promise<Hour
   // Step 5: Split into sections and clean each
   const sections = splitTextIntoSections(allText, name)
 
-  // Step 6: Post-process sections — strip remaining junk from intro, clean dismissal
+  // Step 6: Post-process sections â strip remaining junk from intro, clean dismissal
   for (const section of sections) {
     section.text = cleanSectionText(section.text, section.type)
   }
@@ -297,13 +299,13 @@ function cleanSectionText(text: string, type: string): string {
     if (/contribute now/i.test(t)) return false
     if (/thank you for praying/i.test(t)) return false
     if (/your.*offering helps/i.test(t)) return false
-    if (t === '↑' || /^to top$/i.test(t)) return false
+    if (t === 'â' || /^to top$/i.test(t)) return false
     return true
   })
 
   // For dismissal: strip everything after "Amen." (CSS junk)
   if (type === 'dismissal') {
-    const amenIdx = lines.findIndex(l => l.trim() === '— Amen.' || l.trim() === '_—_ Amen.')
+    const amenIdx = lines.findIndex(l => l.trim() === 'â Amen.' || l.trim() === '_â_ Amen.')
     if (amenIdx >= 0) {
       lines = lines.slice(0, amenIdx + 1)
     }

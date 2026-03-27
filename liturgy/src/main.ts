@@ -1,4 +1,5 @@
 import './styles.css'
+import QRCode from 'qrcode'
 import { createLiturgyController } from './liturgy-controller'
 import { loadSettings, saveSettings } from './settings'
 import type { LiturgyPhase, HourInfo, ScrollMode } from './types'
@@ -37,6 +38,14 @@ app.innerHTML = `
     </div>
     <div id="hero-pill" class="hero-pill is-ready" aria-live="polite">Ready</div>
   </header>
+
+  <section id="install-card" class="card" style="text-align:center">
+    <p class="section-label">Install on Even G2</p>
+    <div id="qr-container" style="margin:12px auto;width:200px;height:200px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center">
+      <span class="hint">Loading QR...</span>
+    </div>
+    <p class="hint" style="margin-top:8px">Scan this QR code in the <strong>Even Hub</strong> section of the app</p>
+  </section>
 
   <section class="card">
     <div class="top-actions">
@@ -86,6 +95,10 @@ app.innerHTML = `
         </select>
       </div>
       <div class="setting-row">
+        <span class="setting-label">Tap to advance</span>
+        <label class="hour-toggle"><input id="tap-advance-check" type="checkbox" ${settings.tapToAdvance ? 'checked' : ''} /> Enabled</label>
+      </div>
+      <div class="setting-row">
         <span class="setting-label">Seconds per page</span>
         <input id="scroll-speed-input" class="setting-input" type="number" min="2" max="60" step="1" value="${settings.autoScrollSeconds}" style="width:70px" />
       </div>
@@ -124,7 +137,7 @@ app.innerHTML = `
 
   <section class="card">
     <p class="section-label">Glasses Controls</p>
-    <p class="hint">Hour list: Scroll to navigate, Tap to select. Reading: Scroll up/down to change page, Tap to pause/resume auto-scroll, Double-tap to exit.</p>
+    <p class="hint">Hour list: Scroll to navigate, Tap to select. Reading: Tap to advance page (if enabled), Scroll up/down to change page, Double-tap to go back.</p>
   </section>
 
   <section class="card">
@@ -138,7 +151,7 @@ app.innerHTML = `
   </section>
 `
 
-// ── Element refs ──
+// ââ Element refs ââ
 
 const heroPill = document.querySelector<HTMLDivElement>('#hero-pill')!
 const connectBtn = document.querySelector<HTMLButtonElement>('#connect-btn')!
@@ -162,11 +175,11 @@ const hourToggles = document.querySelector<HTMLDivElement>('#hour-toggles')!
 const logEl = document.querySelector<HTMLPreElement>('#event-log')!
 const clearLogBtn = document.querySelector<HTMLButtonElement>('#clear-log-btn')!
 
-// ── State ──
+// ââ State ââ
 
 let currentHours: HourInfo[] = []
 
-// ── UI helpers ──
+// ââ UI helpers ââ
 
 function updateHeroPill(phase: LiturgyPhase): void {
   const config: Record<LiturgyPhase, { label: string; className: string }> = {
@@ -229,7 +242,7 @@ function updateReadingView(text: string, progress: string): void {
   nextBtn.disabled = false
 }
 
-// ── Controller ──
+// ââ Controller ââ
 
 const controller = createLiturgyController({
   setPhase,
@@ -243,7 +256,7 @@ const controller = createLiturgyController({
 
 setPhase('idle')
 
-// ── Event wiring ──
+// ââ Event wiring ââ
 
 connectBtn.addEventListener('click', () => {
   void controller.connect()
@@ -272,6 +285,15 @@ stopReadingBtn.addEventListener('click', () => controller.stopReading())
 
 clearLogBtn.addEventListener('click', () => {
   logEl.textContent = ''
+})
+
+const tapAdvanceCheck = document.querySelector<HTMLInputElement>('#tap-advance-check')!
+
+tapAdvanceCheck.addEventListener('change', () => {
+  const s = loadSettings()
+  s.tapToAdvance = tapAdvanceCheck.checked
+  saveSettings(s)
+  appendLog(`Tap to advance: ${s.tapToAdvance ? 'on' : 'off'}`)
 })
 
 scrollModeSelect.addEventListener('change', () => {
@@ -343,12 +365,30 @@ hourToggles.addEventListener('change', () => {
   appendLog(`Updated visible hours`)
 })
 
+// ââ QR code ââ
+
+async function generateQR(): Promise<void> {
+  const container = document.querySelector<HTMLDivElement>('#qr-container')
+  if (!container) return
+
+  const url = window.location.origin
+  try {
+    const canvas = document.createElement('canvas')
+    await QRCode.toCanvas(canvas, url, { width: 200, margin: 2 })
+    canvas.style.borderRadius = '8px'
+    container.innerHTML = ''
+    container.appendChild(canvas)
+  } catch {
+    container.innerHTML = `<span class="hint">${url}</span>`
+  }
+}
+
 // Auto-connect and auto-load on startup
 async function startup() {
+  void generateQR()
   await Promise.all([
     controller.loadHours(),
     controller.connect(),
   ])
-  // If hours loaded and bridge connected, glasses will show the hour list automatically
 }
 void startup()
