@@ -121,7 +121,29 @@ function paginateSections(sections: PrayerSection[]): string[] {
       .map(l => formatLine(l))
 
     for (const raw of rawLines) {
+      // Add blank line before antiphons for visual separation
+      if (raw.startsWith('\u2726 ') || raw.startsWith('* Ant')) {
+        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+          allLines.push('')
+        }
+      }
+      // Add blank line before section-like headings
+      if (raw.startsWith('-- ') && raw.endsWith(' --')) {
+        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+          allLines.push('')
+        }
+      }
+      // Add blank line before bracketed instructions
+      if (raw.startsWith('[') && raw.endsWith(']') && raw.length < 40) {
+        if (allLines.length > 0 && allLines[allLines.length - 1] !== '') {
+          allLines.push('')
+        }
+      }
       allLines.push(...wordWrap(raw, CHARS_PER_LINE))
+      // Add blank line after antiphons
+      if (raw.startsWith('\u2726 ') || raw.startsWith('* Ant')) {
+        allLines.push('')
+      }
     }
   }
 

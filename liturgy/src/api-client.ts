@@ -3,7 +3,9 @@ import type { HoursIndex, HourContent } from './types'
 const SERVER_URL = ''
 
 export async function fetchHours(date: string): Promise<HoursIndex> {
-  const res = await fetch(`${SERVER_URL}/api/hours?date=${date}`)
+  // Send timezone offset so the API can adjust for UTC vs local
+  const tzOffset = new Date().getTimezoneOffset()
+  const res = await fetch(`${SERVER_URL}/api/hours?date=${date}&tz=${tzOffset}`)
   if (!res.ok) throw new Error(`Server error: ${res.status}`)
   return res.json()
 }
