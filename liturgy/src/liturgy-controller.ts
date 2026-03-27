@@ -367,7 +367,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
           if (state.view === 'reading') void onReadingEvent(OsEventTypeList.DOUBLE_CLICK_EVENT)
           break
       }
-    })
+    }, log)
 
     if (started) {
       log('Head gesture mode active')
