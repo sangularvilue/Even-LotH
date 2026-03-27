@@ -419,7 +419,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       log(`Loading ${hour.name}...`)
 
       try {
-        const content = await fetchHour(hour.slug, state.date)
+        const content = await fetchHour(hour.slug, hour.date || state.date)
 
         stopSpinner()
 
@@ -541,7 +541,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     log(`Loading ${hourName}...`)
 
     try {
-      const content = await fetchHour(slug, state.date)
+      const content = await fetchHour(slug, hour?.date || state.date)
 
       stopSpinner()
 

@@ -1,6 +1,7 @@
 export type HourInfo = {
   slug: string
   name: string
+  date?: string
 }
 
 export type PrayerSection = {
