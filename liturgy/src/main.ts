@@ -94,6 +94,7 @@ app.innerHTML = `
         <select id="scroll-mode-select" class="setting-select">
           <option value="manual" ${settings.scrollMode === 'manual' ? 'selected' : ''}>Manual</option>
           <option value="auto" ${settings.scrollMode === 'auto' ? 'selected' : ''}>Auto-scroll</option>
+          <option value="head-gesture" ${settings.scrollMode === 'head-gesture' ? 'selected' : ''}>Head gestures</option>
         </select>
       </div>
       <div class="setting-row">
@@ -283,6 +284,9 @@ scrollModeSelect.addEventListener('change', () => {
   s.scrollMode = scrollModeSelect.value as ScrollMode
   saveSettings(s)
   appendLog(`Scroll mode: ${s.scrollMode}`)
+  if (s.scrollMode === 'head-gesture') {
+    appendLog('Head gestures: nod down = next page, nod up = prev, tilt right = select, tilt left = back')
+  }
 })
 
 scrollSpeedInput.addEventListener('change', () => {

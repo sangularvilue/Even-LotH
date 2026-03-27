@@ -30,7 +30,7 @@ export type PrayerPage = {
   totalPagesInSection: number
 }
 
-export type ScrollMode = 'manual' | 'auto'
+export type ScrollMode = 'manual' | 'auto' | 'head-gesture'
 
 export type DisplayColumns = 1 | 2
 

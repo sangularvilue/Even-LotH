@@ -19,7 +19,7 @@ export function loadSettings(): LiturgySettings {
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw)
     return {
-      scrollMode: parsed.scrollMode === 'auto' ? 'auto' : 'manual',
+      scrollMode: parsed.scrollMode === 'auto' ? 'auto' : parsed.scrollMode === 'head-gesture' ? 'head-gesture' : 'manual',
       autoScrollSeconds: typeof parsed.autoScrollSeconds === 'number' && parsed.autoScrollSeconds > 0
         ? parsed.autoScrollSeconds : DEFAULTS.autoScrollSeconds,
       tapToAdvance: typeof parsed.tapToAdvance === 'boolean' ? parsed.tapToAdvance : DEFAULTS.tapToAdvance,

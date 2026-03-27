@@ -13,6 +13,7 @@ import { withTimeout } from './shared/async'
 import { getRawEventType, normalizeEventType } from './shared/even-events'
 import { fetchHours, fetchHour } from './api-client'
 import { loadSettings } from './settings'
+import { startHeadGestures, stopHeadGestures } from './head-gestures'
 import type { HourInfo, LiturgyPhase, PrayerSection } from './types'
 
 type ControllerDeps = {
@@ -341,6 +342,44 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     return '\u2501'.repeat(filled) + '\u2500'.repeat(barLen - filled)
   }
 
+  // ── Head gesture control ──
+
+  async function startHeadGestureMode(): Promise<void> {
+    const bridge = state.bridge
+    if (!bridge) return
+    const settings = loadSettings()
+    if (settings.scrollMode !== 'head-gesture') return
+
+    const started = await startHeadGestures(bridge, (action) => {
+      log(`Gesture: ${action}`)
+      switch (action) {
+        case 'scroll_down':
+          if (state.view === 'reading') void onReadingEvent(OsEventTypeList.SCROLL_BOTTOM_EVENT)
+          break
+        case 'scroll_up':
+          if (state.view === 'reading') void onReadingEvent(OsEventTypeList.SCROLL_TOP_EVENT)
+          break
+        case 'tap':
+          if (state.view === 'reading') void onReadingEvent(OsEventTypeList.CLICK_EVENT)
+          else if (state.view === 'hours') void onHourListEvent(OsEventTypeList.CLICK_EVENT, state.selectedHourIndex)
+          break
+        case 'double_tap':
+          if (state.view === 'reading') void onReadingEvent(OsEventTypeList.DOUBLE_CLICK_EVENT)
+          break
+      }
+    })
+
+    if (started) {
+      log('Head gesture mode active')
+    } else {
+      log('Head gestures unavailable — IMU not supported in this SDK version')
+    }
+  }
+
+  async function stopHeadGestureMode(): Promise<void> {
+    if (state.bridge) await stopHeadGestures(state.bridge)
+  }
+
   // ── Reading layout ──
 
   async function setupReadingLayout(): Promise<void> {
@@ -630,6 +669,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         log(`${hour.name}: ${state.pages.length} pages`)
 
         await setupReadingLayout()
+        void startHeadGestureMode()
       } catch (err) {
         stopSpinner()
         log(`Error: ${err}`)
@@ -642,6 +682,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
   async function onReadingEvent(eventType: number | undefined): Promise<void> {
     if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+      void stopHeadGestureMode()
       state.pages = []
       state.pageIndex = 0
       state.view = 'hours'
@@ -780,6 +821,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       if (state.bridge) {
         await setupReadingLayout()
+        void startHeadGestureMode()
       }
     } catch (err) {
       stopSpinner()
@@ -789,6 +831,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   function stopReading(): void {
+    void stopHeadGestureMode()
     stopSpinner()
     state.pages = []
     state.pageIndex = 0
