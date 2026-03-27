@@ -41,7 +41,7 @@ const DISPLAY_WIDTH = 576
 const TEXT_HEIGHT = 256
 const BAR_HEIGHT = 30
 
-// Conservative page sizing â 7 lines of ~50 chars fits safely
+// Conservative page sizing — 7 lines of ~50 chars fits safely
 const CHARS_PER_LINE = 50
 const LINES_PER_PAGE = 7
 
@@ -72,13 +72,45 @@ function wordWrap(text: string, maxWidth: number): string[] {
   return result.length > 0 ? result : [text]
 }
 
+/**
+ * Convert semantic markers from the API into plain-text formatting
+ * for the glasses text container.
+ *
+ *   {r}...{/r}        rubric       -> [...]  or  -- HEADING --
+ *   {v}...{/v}        response     -> R/
+ *   {ant}...{/ant}    antiphon     -> * Ant.:
+ *   {i}...{/i}        cross-ref    -> (...)
+ *   {title}...{/title} title       -> -- Title --
+ */
+function formatLine(line: string): string {
+  return line
+    // All-caps rubric headings on own line -> decorated
+    .replace(/^\{r\}([A-Z][A-Z\s\d:,\-]+)\{\/r\}$/, '-- $1 --')
+    // Psalm/canticle title rubrics
+    .replace(/^\{r\}(Psalm\s.+|Canticle\s.+|Luke\s.+|The Messiah.+)\{\/r\}$/i, '-- $1 --')
+    // Bracketed instructions like [Psalm-prayer]
+    .replace(/\{r\}\[([^\]]+)\]\{\/r\}/g, '[$1]')
+    // Other rubrics -> brackets
+    .replace(/\{r\}(.+?)\{\/r\}/g, '[$1]')
+    // Response marker
+    .replace(/\{v\}\u2014\{\/v\}\s*/g, 'R/ ')
+    // Antiphon labels
+    .replace(/\{ant\}(Ant\.?\s*\d*)\{\/ant\}\s*/g, '* $1 ')
+    // Italic cross-references -> parens
+    .replace(/\{i\}(.+?)\{\/i\}/g, '($1)')
+    // Title blocks
+    .replace(/\{title\}(.+?)\{\/title\}/g, '-- $1 --')
+    // Clean any remaining markers
+    .replace(/\{\/?\w+\}/g, '')
+}
+
 function paginateSections(sections: PrayerSection[]): string[] {
   const allLines: string[] = []
 
   for (const section of sections) {
     if (section.label) {
       allLines.push('')
-      allLines.push(`â ${section.label} â`)
+      allLines.push(`== ${section.label} ==`)
       allLines.push('')
     }
 
@@ -86,6 +118,7 @@ function paginateSections(sections: PrayerSection[]): string[] {
       .split('\n')
       .map(l => l.trim())
       .filter(l => l.length > 0)
+      .map(l => formatLine(l))
 
     for (const raw of rawLines) {
       allLines.push(...wordWrap(raw, CHARS_PER_LINE))
@@ -141,7 +174,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     return '\u2501'.repeat(filled) + '\u2500'.repeat(barLen - filled)
   }
 
-  // ââ Reading layout ââ
+  // ── Reading layout ──
 
   async function setupReadingLayout(): Promise<void> {
     const bridge = state.bridge
@@ -221,7 +254,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
-  // ââ Loading spinner ââ
+  // ── Loading spinner ──
 
   function stopSpinner(): void {
     if (spinnerIntervalId !== null) {
@@ -295,7 +328,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }, 250)
   }
 
-  // ââ Hour list ââ
+  // ── Hour list ──
 
   async function renderHourListPage(): Promise<void> {
     const bridge = state.bridge
@@ -351,7 +384,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     currentLayout = 'hours'
   }
 
-  // ââ Event handling ââ
+  // ── Event handling ──
 
   function registerEventLoop(bridge: EvenAppBridge): void {
     if (state.eventLoopRegistered) return
@@ -480,7 +513,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
-  // ââ Public API ââ
+  // ── Public API ──
 
   async function connect(): Promise<void> {
     publishPhase('connecting')

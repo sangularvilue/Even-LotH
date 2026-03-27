@@ -12,6 +12,9 @@ export default defineConfig({
     fs: {
       allow: [resolve(appRoot, '..')],
     },
+    proxy: {
+      '/api': 'https://loth.grannis.xyz',
+    },
   },
   build: {
     outDir: resolve(appRoot, 'dist'),

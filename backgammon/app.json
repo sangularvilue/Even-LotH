@@ -1,0 +1,19 @@
+{
+  "package_id": "com.bnm.evendev.backgammon",
+  "edition": "202601",
+  "name": "Backgammon",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "tagline": "Single-player backgammon vs AI on Even G2 glasses.",
+  "description": "Backgammon game with cursor-based input for Even G2 smart glasses",
+  "author": "even-dev",
+  "entrypoint": "index.html",
+  "permissions": {
+    "network": [
+      "evenhub.evenrealities.com"
+    ],
+    "fs": [
+      "./assets"
+    ]
+  }
+}

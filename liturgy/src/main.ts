@@ -151,7 +151,7 @@ app.innerHTML = `
   </section>
 `
 
-// ââ Element refs ââ
+// ── Element refs ──
 
 const heroPill = document.querySelector<HTMLDivElement>('#hero-pill')!
 const connectBtn = document.querySelector<HTMLButtonElement>('#connect-btn')!
@@ -175,11 +175,11 @@ const hourToggles = document.querySelector<HTMLDivElement>('#hour-toggles')!
 const logEl = document.querySelector<HTMLPreElement>('#event-log')!
 const clearLogBtn = document.querySelector<HTMLButtonElement>('#clear-log-btn')!
 
-// ââ State ââ
+// ── State ──
 
 let currentHours: HourInfo[] = []
 
-// ââ UI helpers ââ
+// ── UI helpers ──
 
 function updateHeroPill(phase: LiturgyPhase): void {
   const config: Record<LiturgyPhase, { label: string; className: string }> = {
@@ -242,7 +242,7 @@ function updateReadingView(text: string, progress: string): void {
   nextBtn.disabled = false
 }
 
-// ââ Controller ââ
+// ── Controller ──
 
 const controller = createLiturgyController({
   setPhase,
@@ -256,7 +256,7 @@ const controller = createLiturgyController({
 
 setPhase('idle')
 
-// ââ Event wiring ââ
+// ── Event wiring ──
 
 connectBtn.addEventListener('click', () => {
   void controller.connect()
@@ -365,7 +365,7 @@ hourToggles.addEventListener('change', () => {
   appendLog(`Updated visible hours`)
 })
 
-// ââ QR code ââ
+// ── QR code ──
 
 async function generateQR(): Promise<void> {
   const container = document.querySelector<HTMLDivElement>('#qr-container')

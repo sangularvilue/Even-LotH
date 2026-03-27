@@ -1,6 +1,6 @@
 import type { DisplayColumns, PrayerSection } from './types'
 
-// ââ Tile layout ââ
+// ── Tile layout ──
 // Image containers: max 200Ã100 each, max 4 containers per page.
 // 1 column:  1Ã3 grid (200Ã288) + 1 event-capture list = 4 containers
 // 2 columns: 2Ã2 grid (400Ã200) = 4 containers (no event capture; phone controls only)
@@ -22,7 +22,7 @@ export type TileLayout = {
 export function computeTileLayout(columns: DisplayColumns): TileLayout {
   if (columns === 2) {
     // 2Ã2 grid = 400Ã200, all 4 slots used by images.
-    // Gestures still work â onEvenHubEvent fires on the bridge regardless.
+    // Gestures still work — onEvenHubEvent fires on the bridge regardless.
     return {
       cols: 2, rows: 2,
       tileWidth: 200, tileHeight: 100,
@@ -49,14 +49,14 @@ export type FontSettings = {
   letterSpacing: number
 }
 
-// ââ Line model ââ
+// ── Line model ──
 
 type DisplayLine = {
   text: string
   type: 'text' | 'section' | 'blank'
 }
 
-// ââ Pre-render all prayer text onto a tall off-screen canvas ââ
+// ── Pre-render all prayer text onto a tall off-screen canvas ──
 
 export class PrayerCanvas {
   private canvas: HTMLCanvasElement
@@ -144,7 +144,7 @@ export class PrayerCanvas {
   }
 }
 
-// ââ Text â display lines ââ
+// ── Text â display lines ──
 
 function buildDisplayLines(sections: PrayerSection[], charsPerLine: number): DisplayLine[] {
   const lines: DisplayLine[] = []
@@ -152,7 +152,7 @@ function buildDisplayLines(sections: PrayerSection[], charsPerLine: number): Dis
   for (const section of sections) {
     if (section.label) {
       lines.push({ text: '', type: 'blank' })
-      lines.push({ text: `â ${section.label} â`, type: 'section' })
+      lines.push({ text: `— ${section.label} —`, type: 'section' })
       lines.push({ text: '', type: 'blank' })
     }
 
