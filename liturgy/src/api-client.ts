@@ -1,6 +1,9 @@
 import type { HoursIndex, HourContent } from './types'
 
-const SERVER_URL = ''
+// When running from .ehpk (no local API), use the Vercel deployment.
+// When running from loth.grannis.xyz, use relative URLs.
+const isLocalFile = window.location.protocol === 'file:' || !window.location.host.includes('grannis')
+const SERVER_URL = isLocalFile ? 'https://loth.grannis.xyz' : ''
 
 export async function fetchHours(date: string): Promise<HoursIndex> {
   // Send timezone offset so the API can adjust for UTC vs local

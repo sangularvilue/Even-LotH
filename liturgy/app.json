@@ -2,14 +2,24 @@
   "package_id": "com.bnm.evendev.liturgy",
   "edition": "202601",
   "name": "Liturgy of the Hours",
-  "version": "0.1.0",
-  "min_app_version": "0.1.0",
-  "tagline": "Divine Office prayer reader for Even G2.",
-  "description": "Liturgy of the Hours prayer reader for Even G2 glasses. Browse and read the Divine Office hour by hour.",
-  "author": "even-dev",
+  "version": "0.3.0",
+  "min_app_version": "2.0.0",
+  "min_sdk_version": "0.0.7",
+  "tagline": "Pray the ancient prayer of the Church on your G2.",
+  "description": "Liturgy of the Hours prayer reader for Even G2 glasses. Browse and read the Divine Office hour by hour with clean, formatted text. Pulls daily prayers from divineoffice.org.",
+  "author": "Will Grannis",
   "entrypoint": "index.html",
-  "permissions": {
-    "network": ["evenhub.evenrealities.com"],
-    "fs": ["./assets"]
-  }
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Fetches daily prayer texts from divineoffice.org via loth.grannis.xyz API",
+      "whitelist": [
+        "https://loth.grannis.xyz",
+        "https://divineoffice.org"
+      ]
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
 }
