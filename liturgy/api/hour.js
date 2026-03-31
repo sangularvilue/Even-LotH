@@ -1,16 +1,19 @@
 import https from 'https'
 
-function fetchUrl(url) {
+function fetchJson(url) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchUrl(new URL(res.headers.location, url).href).then(resolve, reject)
+        fetchJson(new URL(res.headers.location, url).href).then(resolve, reject)
         res.resume()
         return
       }
       const chunks = []
       res.on('data', (c) => chunks.push(c))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString()))
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())) }
+        catch (e) { reject(new Error('Invalid JSON from divineoffice.org')) }
+      })
       res.on('error', reject)
     }).on('error', reject)
   })
@@ -20,7 +23,7 @@ function fetchUrl(url) {
 
 const JUNK_PATTERNS = [
   /^https?:\/\//,
-  /^Ribbon Placement/i, /^\{r\}Ribbon Placement/i,
+  /^Ribbon Placement/i,
   /^Liturgy of the Hours Vol/i,
   /^Christian Prayer:/i,
   /^Ordinary:\s*\d/i,
@@ -57,6 +60,7 @@ const JUNK_PATTERNS = [
   /^#[0-9a-f]{3,8}\s*[;,}]?$/i, /^\d+px[;,]?$/,
   /^none\s*;?$/, /^auto\s*;?$/, /^inherit\s*;?$/,
   /^!important/, /^@media/, /^@import/, /^-webkit-/, /^-moz-/,
+  /^\*\s*\{/, /^html\s*\{/, /^body\s*\{/, // CSS rules
 ]
 
 function isJunkLine(line) {
@@ -68,26 +72,24 @@ function isJunkLine(line) {
 }
 
 // ── HTML Processing ──
-// Instead of stripping all HTML, we convert semantic HTML into markers
-// that we preserve in the output.
-//
-// Conventions in the output:
-//   {r}...{/r}  = rubric (red text) — not said aloud: section headings, labels
-//   {v}...{/v}  = versicle/response marker (the — that starts a response)
-//   {i}...{/i}  = instruction (italic cross-references, psalm subtitles)
-//   {ant}...{/ant} = antiphon
-//   {title}...{/title} = psalm/canticle title (centered red text)
+
+const SECTION_KEYWORDS = [
+  'HYMN', 'PSALMODY', 'PSALM', 'CANTICLE', 'READING', 'RESPONSORY',
+  'INTERCESSIONS', 'CONCLUDING PRAYER', 'DISMISSAL', 'INVITATORY',
+  'ANTIPHON', 'BENEDICTUS', 'MAGNIFICAT', 'NUNC DIMITTIS',
+  'TE DEUM', 'OFFICE OF READINGS', 'SECOND READING',
+]
 
 function processHtml(rawHtml) {
   let html = rawHtml
 
-  // Remove hymn credit tables
+  // Remove hymn credit tables and audio players
   html = html.replace(/<div class="table-container">[\s\S]*?<\/div>/gi, '')
-
-  // Remove audio players
   html = html.replace(/<div class="powerpress_player">[\s\S]*?<\/div>/gi, '')
+  // Remove style tags
+  html = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
 
-  // Convert block-level tags to newlines FIRST so markers end up on own lines
+  // Convert block-level tags to newlines
   html = html.replace(/<\/p>/gi, '\n\n')
   html = html.replace(/<p[^>]*>/gi, '\n')
   html = html.replace(/<br\s*\/?>/gi, '\n')
@@ -97,40 +99,33 @@ function processHtml(rawHtml) {
   html = html.replace(/<\/li>/gi, '\n')
   html = html.replace(/<\/tr>/gi, '\n')
 
-  // Process red spans — these are rubrics
+  // Process red spans — rubrics
   html = html.replace(
     /<span[^>]*color:\s*#ff0000[^>]*>([\s\S]*?)<\/span>/gi,
     (_, inner) => {
       let text = inner.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '').trim()
       text = text.replace(/&#8212;/g, '\u2014').replace(/&#8217;/g, '\u2019')
       if (!text) return ''
-      // Em-dash response marker
       if (text === '\u2014') return '\n{v}\u2014{/v} '
-      // Antiphon label
       if (/^Ant\.?\s*\d*/i.test(text)) return '\n{ant}' + text + '{/ant} '
-      // Psalm-prayer label
       if (/^Psalm-prayer/i.test(text)) return '\n{r}[Psalm-prayer]{/r}\n'
-      // Section headings (all-caps or known keywords)
       const firstLine = text.split('\n')[0].trim()
       const isUpperCase = firstLine.length > 0 && firstLine === firstLine.toUpperCase() && /[A-Z]/.test(firstLine)
       if (isUpperCase && firstLine.length < 60) {
-        // If multi-line (e.g. "Psalm 51\nO God, have mercy"), split: heading + subtitle
         const parts = text.split('\n').map(p => p.trim()).filter(Boolean)
         if (parts.length > 1) {
           return '\n\n{r}' + parts[0] + '{/r}\n{r}' + parts.slice(1).join(' ') + '{/r}\n'
         }
         return '\n\n{r}' + firstLine + '{/r}\n'
       }
-      // Title-like red text (e.g. "Morning Prayer for Friday...")
       if (text.length > 20 && /prayer|office|invitatory|night|evening|morning/i.test(text)) {
         return '\n\n{r}' + text + '{/r}\n'
       }
-      // Other red text = rubric/instruction
       return '{r}' + text + '{/r} '
     }
   )
 
-  // Process italic/em tags — these are cross-references and subtitles
+  // Process italic/em tags — cross-references
   html = html.replace(
     /<em>([\s\S]*?)<\/em>/gi,
     (_, inner) => {
@@ -140,20 +135,7 @@ function processHtml(rawHtml) {
     }
   )
 
-  // Process centered text (psalm/canticle titles)
-  html = html.replace(
-    /<p[^>]*text-align:\s*center[^>]*>([\s\S]*?)<\/p>/gi,
-    (_, inner) => {
-      // This inner HTML may contain already-processed {r} markers
-      const text = inner
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]*>/g, '')
-        .trim()
-      return '\n{title}' + text + '{/title}\n'
-    }
-  )
-
-  // Strip remaining HTML tags (block-level already converted above)
+  // Strip remaining HTML tags
   html = html
     .replace(/<[^>]*>/g, '')
     .replace(/&amp;/g, '&')
@@ -164,7 +146,7 @@ function processHtml(rawHtml) {
     .replace(/&#8217;/g, '\u2019')
     .replace(/&#8220;/g, '\u201C')
     .replace(/&#8221;/g, '\u201D')
-    .replace(/&#119070;/g, '') // music note symbol
+    .replace(/&#119070;/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&#\d+;/g, '')
     .replace(/\t/g, ' ')
@@ -173,32 +155,15 @@ function processHtml(rawHtml) {
   return html
 }
 
-// ── Section classification ──
-
-const SECTION_KEYWORDS = [
-  'HYMN', 'PSALMODY', 'PSALM', 'CANTICLE', 'READING', 'RESPONSORY',
-  'INTERCESSIONS', 'CONCLUDING PRAYER', 'DISMISSAL', 'INVITATORY',
-  'ANTIPHON', 'BENEDICTUS', 'MAGNIFICAT', 'NUNC DIMITTIS',
-  'TE DEUM', 'OFFICE OF READINGS', 'SECOND READING',
-]
-
 function isSectionHeader(line) {
-  // Check for {r}KEYWORD{/r} pattern (line may have only this)
   const rubricMatch = line.match(/^\{r\}(.+?)\{\/r\}\s*$/)
   if (rubricMatch) {
     const text = rubricMatch[1].trim()
     const upper = text.toUpperCase()
     if (upper.length > 80) return false
     if (SECTION_KEYWORDS.some((kw) => upper === kw || upper.startsWith(kw + ' ') || upper.startsWith(kw + '\n'))) return true
-    // Also match "Psalm 51" or "Canticle – ..." as section headers
     if (/^PSALM\s+\d/.test(upper) || /^CANTICLE/.test(upper)) return true
     return false
-  }
-  // Also check for bare psalm/canticle titles from {title} blocks
-  const titleMatch = line.match(/^\{title\}(.+?)\{\/title\}$/)
-  if (titleMatch) {
-    const upper = titleMatch[1].trim().toUpperCase()
-    return SECTION_KEYWORDS.some((kw) => upper.startsWith(kw))
   }
   return false
 }
@@ -206,19 +171,17 @@ function isSectionHeader(line) {
 function extractSectionLabel(line) {
   const rubricMatch = line.match(/^\{r\}(.+?)\{\/r\}\s*$/)
   if (rubricMatch) return rubricMatch[1].trim()
-  const titleMatch = line.match(/^\{title\}(.+?)\{\/title\}$/)
-  if (titleMatch) return titleMatch[1].trim()
   return line
 }
 
-function classifySection(rubricText) {
-  const upper = rubricText.trim().toUpperCase()
+function classifySection(text) {
+  const upper = text.trim().toUpperCase()
   for (const kw of SECTION_KEYWORDS) {
     if (upper.includes(kw)) {
-      return { type: kw.toLowerCase().replace(/\s+/g, '-'), label: rubricText.trim() }
+      return { type: kw.toLowerCase().replace(/\s+/g, '-'), label: text.trim() }
     }
   }
-  return { type: 'text', label: rubricText.trim() }
+  return { type: 'text', label: text.trim() }
 }
 
 function todayDate() {
@@ -243,38 +206,34 @@ export default async function handler(req, res) {
   }
 
   try {
-    const html = await fetchUrl(`https://divineoffice.org/${slug}/?date=${date}`)
+    // Use the REST API instead of scraping — avoids Cloudflare challenges
+    const data = await fetchJson(
+      `https://divineoffice.org/wp-json/do/v1/prayers/?date_start=${date}`
+    )
 
-    const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
-    const name = h1Match ? h1Match[1].replace(/<[^>]*>/g, '').trim() : slug
+    const dayData = data[date]
+    if (!dayData || !dayData.prayers) {
+      return res.status(404).json({ error: 'No prayers found for date ' + date })
+    }
 
-    // Extract main content
-    let rawHtml = html
-    const startMarkers = ['<div class="entry mb-40">', '<div class="entry-content">', '<article']
-    for (const marker of startMarkers) {
-      const idx = html.indexOf(marker)
-      if (idx >= 0) {
-        rawHtml = html.slice(idx)
+    // Find the prayer matching the slug
+    let prayer = null
+    for (const p of dayData.prayers) {
+      const guidMatch = (p.guid || '').match(/divineoffice\.org\/([^/?]+)/)
+      if (guidMatch && guidMatch[1] === slug) {
+        prayer = p
         break
       }
     }
 
-    // Cut at footer
-    const uarrIdx = rawHtml.indexOf('&uarr;')
-    if (uarrIdx > 0) {
-      rawHtml = rawHtml.slice(0, uarrIdx)
-    } else {
-      const endMarkers = ['<footer', '<div id="comments"', '<div class="sidebar"', '<div id="sidebar"', '<!-- .entry']
-      for (const marker of endMarkers) {
-        const idx = rawHtml.indexOf(marker)
-        if (idx > 0) {
-          rawHtml = rawHtml.slice(0, idx)
-          break
-        }
-      }
+    if (!prayer) {
+      return res.status(404).json({ error: 'Prayer not found: ' + slug, date })
     }
 
-    // Process HTML preserving semantic markers
+    const name = prayer.post_title || slug
+    const rawHtml = prayer.post_content || ''
+
+    // Process the HTML content
     const allText = processHtml(rawHtml)
     const lines = allText.split('\n')
       .map((l) => l.trim())
@@ -294,7 +253,6 @@ export default async function handler(req, res) {
       } else if (currentSection) {
         currentSection.text += (currentSection.text ? '\n' : '') + line
       } else {
-        // Content before first section header = intro
         currentSection = { type: 'intro', label: name, text: line }
         sections.push(currentSection)
       }
@@ -304,6 +262,6 @@ export default async function handler(req, res) {
 
     res.json({ slug, name, date, sections: filtered })
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch hour content', detail: err.message })
+    res.status(500).json({ error: 'Failed to fetch prayer', detail: err.message })
   }
 }
