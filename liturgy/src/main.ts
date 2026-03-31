@@ -1,5 +1,4 @@
 import './styles.css'
-import QRCode from 'qrcode'
 import { createLiturgyController } from './liturgy-controller'
 import { loadSettings, saveSettings } from './settings'
 import type { LiturgyPhase, HourInfo, ScrollMode } from './types'
@@ -41,13 +40,6 @@ app.innerHTML = `
     <div id="hero-pill" class="hero-pill is-ready" aria-live="polite">Ready</div>
   </header>
 
-  <section id="install-card" class="card" style="text-align:center">
-    <p class="section-label">Install on Even G2</p>
-    <div id="qr-container" style="margin:12px auto;width:200px;height:200px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center">
-      <span class="hint">Loading QR...</span>
-    </div>
-    <p class="hint" style="margin-top:8px">Scan this QR code in the <strong>Even Hub</strong> section of the app</p>
-  </section>
 
   <section class="card">
     <div class="top-actions">
@@ -314,27 +306,8 @@ hourToggles.addEventListener('change', () => {
   appendLog(`Updated visible hours`)
 })
 
-// ── QR code ──
-
-async function generateQR(): Promise<void> {
-  const container = document.querySelector<HTMLDivElement>('#qr-container')
-  if (!container) return
-
-  const url = window.location.origin
-  try {
-    const canvas = document.createElement('canvas')
-    await QRCode.toCanvas(canvas, url, { width: 200, margin: 2 })
-    canvas.style.borderRadius = '8px'
-    container.innerHTML = ''
-    container.appendChild(canvas)
-  } catch {
-    container.innerHTML = `<span class="hint">${url}</span>`
-  }
-}
-
 // Auto-connect and auto-load on startup
 async function startup() {
-  void generateQR()
   await Promise.all([
     controller.loadHours(),
     controller.connect(),
