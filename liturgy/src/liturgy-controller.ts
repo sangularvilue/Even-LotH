@@ -547,7 +547,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
   async function renderHourListPage(): Promise<void> {
     const bridge = state.bridge
-    if (!bridge) return
+    if (!bridge) { log('[glasses] render skipped (no bridge)'); return }
 
     const hours = visibleHours()
     if (hours.length === 0) {
@@ -555,6 +555,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       return
     }
 
+    log(`[glasses] rendering ${hours.length} hours (startup=${state.startupRendered})`)
     stopSpinner()
 
     const titleText = new TextContainerProperty({
@@ -590,13 +591,20 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       listObject: [hourList],
     }
 
-    if (!state.startupRendered) {
-      await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(config))
-      state.startupRendered = true
-    } else {
-      await bridge.rebuildPageContainer(new RebuildPageContainer(config))
+    try {
+      if (!state.startupRendered) {
+        const r = await bridge.createStartUpPageContainer(new CreateStartUpPageContainer(config))
+        log(`[glasses] createStartUpPageContainer → ${r}`)
+        state.startupRendered = true
+      } else {
+        const r = await bridge.rebuildPageContainer(new RebuildPageContainer(config))
+        log(`[glasses] rebuildPageContainer → ${r}`)
+      }
+      currentLayout = 'hours'
+    } catch (err) {
+      log(`[glasses] render list FAILED: ${err}`)
+      throw err
     }
-    currentLayout = 'hours'
   }
 
   // ── Event handling ──
@@ -856,11 +864,23 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     log('Stopped reading')
   }
 
+  // Public render-hour-list hook. Used as a belt-and-suspenders from main.ts
+  // after both connect() and loadHours() have resolved, in case the internal
+  // race-window checks in either function didn't fire.
+  async function renderHourList(): Promise<void> {
+    if (!state.bridge) return
+    if (state.hours.length === 0) return
+    if (currentLayout === 'hours') return
+    state.view = 'hours'
+    await renderHourListPage()
+  }
+
   return {
     connect,
     loadHours,
     selectHour,
     stopReading,
+    renderHourList,
     getState: () => ({ ...state }),
   }
 }

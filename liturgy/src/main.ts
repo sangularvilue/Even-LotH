@@ -429,12 +429,21 @@ function wireUpApp(lang: Language, t: typeof STRINGS['en']) {
   }
 
   async function startup() {
-    // Kick off prefetch & connect in parallel — don't block user interaction on network
-    void runPrefetch(lang)
+    // IMPORTANT: do NOT prefetch concurrently with the initial load/connect.
+    // Let the core flow finish so the first bridge.createStartUpPageContainer
+    // call lands before extra network traffic starts queuing.
     await Promise.all([
       controller.loadHours(),
       controller.connect(),
     ])
+    // Belt-and-suspenders: the internal race-window checks inside loadHours()
+    // and connect() each guard on the OTHER having completed — but on some
+    // webviews their microtask ordering lets both run before the peer's
+    // mutation lands. Call the explicit render-hour-list hook so the glasses
+    // definitely get the list once both finish.
+    await controller.renderHourList().catch((err) => appendLog(`Render error: ${err}`))
+    // Background-prefetch the rest of the week now that the hour list is live.
+    void runPrefetch(lang)
   }
   void startup()
 }
