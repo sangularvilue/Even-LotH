@@ -317,3 +317,89 @@ pre {
   .hero-pill { align-self: flex-start; }
   .hour-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Language picker overlay ── */
+
+.lang-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.lang-picker-card {
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+
+.lang-picker-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.lang-btn {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 12px !important;
+  gap: 4px;
+  min-height: 110px;
+}
+
+.lang-btn-flag { font-size: 2.2rem; line-height: 1; }
+.lang-btn-label { font-weight: 600; font-size: 1rem; }
+.lang-btn-sub { font-size: 0.7rem; opacity: 0.75; }
+
+/* ── Prefetch progress banner ── */
+
+.prefetch-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--lit-surface-2);
+  border: 1px solid var(--lit-border);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  color: var(--lit-text-muted);
+}
+
+.prefetch-banner.is-done { border-color: #86efac; background: #ecfdf5; color: #047857; }
+
+.prefetch-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--lit-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.prefetch-bar-fill {
+  height: 100%;
+  background: var(--lit-accent);
+  transition: width 0.2s ease;
+}
+
+.prefetch-label { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.lang-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--lit-surface-2);
+  border: 1px solid var(--lit-border);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  color: var(--lit-text-muted);
+  margin-left: 8px;
+  cursor: pointer;
+}
+.lang-badge:hover { border-color: var(--lit-accent); color: var(--lit-accent); }
+

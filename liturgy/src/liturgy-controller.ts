@@ -776,18 +776,23 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       state.hours = [...index.hours]
 
-      // Add yesterday's Evening Prayer and Night Prayer for night workers
+      // Append yesterday's Evening & Night Prayer for night workers (bilingual match)
       if (yesterdayIndex?.hours) {
-        const yesterdayEP = yesterdayIndex.hours.find(h =>
-          h.name.toLowerCase().includes('evening prayer'))
-        const yesterdayNP = yesterdayIndex.hours.find(h =>
-          h.name.toLowerCase().includes('night prayer'))
-        if (yesterdayEP) {
-          state.hours.push({ ...yesterdayEP, name: `Yesterday's Evening Prayer` })
+        const isEvening = (name: string) => {
+          const n = name.toLowerCase()
+          return n.includes('evening prayer') || n === 'vespri'
         }
-        if (yesterdayNP) {
-          state.hours.push({ ...yesterdayNP, name: `Yesterday's Night Prayer` })
+        const isNight = (name: string) => {
+          const n = name.toLowerCase()
+          return n.includes('night prayer') || n === 'compieta'
         }
+        const italianIndex = index.hours.some(h => h.slug === 'vespri' || h.slug === 'compieta')
+        const prefix = italianIndex ? '' : "Yesterday's "
+        const suffix = italianIndex ? ' di ieri' : ''
+        const ep = yesterdayIndex.hours.find(h => isEvening(h.name))
+        const np = yesterdayIndex.hours.find(h => isNight(h.name))
+        if (ep) state.hours.push({ ...ep, name: `${prefix}${ep.name}${suffix}` })
+        if (np) state.hours.push({ ...np, name: `${prefix}${np.name}${suffix}` })
       }
 
       state.selectedHourIndex = 0

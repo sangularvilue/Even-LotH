@@ -1,8 +1,9 @@
-import type { LiturgySettings, ScrollMode } from './types'
+import type { LiturgySettings, Language, ScrollMode } from './types'
 
 const STORAGE_KEY = 'even.liturgy.settings.v1'
 
 const DEFAULTS: LiturgySettings = {
+  language: null,
   scrollMode: 'manual',
   autoScrollSeconds: 8,
   tapToAdvance: true,
@@ -19,6 +20,7 @@ export function loadSettings(): LiturgySettings {
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw)
     return {
+      language: parsed.language === 'it' ? 'it' : parsed.language === 'en' ? 'en' : null,
       scrollMode: parsed.scrollMode === 'auto' ? 'auto' : parsed.scrollMode === 'head-gesture' ? 'head-gesture' : 'manual',
       autoScrollSeconds: typeof parsed.autoScrollSeconds === 'number' && parsed.autoScrollSeconds > 0
         ? parsed.autoScrollSeconds : DEFAULTS.autoScrollSeconds,
@@ -35,6 +37,16 @@ export function loadSettings(): LiturgySettings {
   } catch {
     return { ...DEFAULTS }
   }
+}
+
+export function getLanguage(): Language {
+  return loadSettings().language ?? 'en'
+}
+
+export function setLanguage(lang: Language): void {
+  const s = loadSettings()
+  s.language = lang
+  saveSettings(s)
 }
 
 export function saveSettings(settings: LiturgySettings): void {
