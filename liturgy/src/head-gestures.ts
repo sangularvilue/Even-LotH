@@ -23,8 +23,11 @@ import type { EvenAppBridge } from '@evenrealities/even_hub_sdk'
 export type GestureAction = 'scroll_up' | 'scroll_down' | 'tap' | 'double_tap'
 export type GestureCallback = (action: GestureAction) => void
 
-const REPORT_FREQ_MS = 500   // ImuReportPace.P500 (protocol pacing code, per SDK reference)
-const DEFAULTS = { accel: 2.0, gyro: 1.2, cooldown: 800, invert: false }
+const REPORT_FREQ_MS = 100   // ImuReportPace.P100 — fast, to catch a quick turn
+// Calibrated to real G2 data: accel is in g, gravity ~1.0 on one axis, a turn
+// deflects a horizontal axis ~0.4–0.5 g. Threshold sits between rest-jitter
+// (~0.03) and a real turn. `smooth` keeps the baseline at rest, not chasing.
+const DEFAULTS = { accel: 0.3, gyro: 1.2, cooldown: 700, invert: false, smooth: 0.06 }
 
 let active = false
 let callback: GestureCallback | null = null
@@ -35,7 +38,6 @@ let samples = 0
 // EMA baselines (so we measure transients, not the resting gravity vector)
 const base = { ax: 0, ay: 0, az: 0 }
 let baseReady = false
-const SMOOTH = 0.2
 
 function tune() {
   const o = (globalThis as any).__HG || {}
@@ -76,17 +78,17 @@ export function handleImuEvent(event: any): boolean {
   if (!d) return false
   samples++
 
+  const t = tune()
   if (!baseReady || samples <= 3) {
     base.ax = d.ax; base.ay = d.ay; base.az = d.az; baseReady = true
     if (samples <= 12) logCb?.(`IMU ax=${d.ax.toFixed(2)} ay=${d.ay.toFixed(2)} az=${d.az.toFixed(2)}${d.gz !== undefined ? ` gz=${d.gz.toFixed(2)}` : ''}`)
     return true
   }
-  base.ax += (d.ax - base.ax) * SMOOTH
-  base.ay += (d.ay - base.ay) * SMOOTH
-  base.az += (d.az - base.az) * SMOOTH
+  base.ax += (d.ax - base.ax) * t.smooth
+  base.ay += (d.ay - base.ay) * t.smooth
+  base.az += (d.az - base.az) * t.smooth
   if (samples <= 12) logCb?.(`IMU ax=${d.ax.toFixed(2)} ay=${d.ay.toFixed(2)} az=${d.az.toFixed(2)}${d.gz !== undefined ? ` gz=${d.gz.toFixed(2)}` : ''}`)
 
-  const t = tune()
   if (Date.now() - lastGesture < t.cooldown) return true
 
   // Which accel axis holds gravity at rest (largest |baseline|) → that's the
