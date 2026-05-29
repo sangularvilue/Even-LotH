@@ -31,6 +31,37 @@ export const SEASON_STYLE: Record<SeasonId, SeasonStyle> = {
   pentecost: { band: '#9c2f2f', bandDeep: '#7a2020', motif: 'hero' },
 }
 
+// Map a breviary-reported liturgical colour (en/it names) → a hex for the
+// small day-colour dot in the header. Forward-compatible: unknown colours fall
+// back to the current season accent (var --band).
+const COLOR_HEX: Record<string, string> = {
+  white: '#bf9a34', bianco: '#bf9a34', gold: '#bf9a34', oro: '#bf9a34',
+  green: '#3f6e52', verde: '#3f6e52',
+  red: '#9c2f2f', rosso: '#9c2f2f',
+  violet: '#5a4a86', viola: '#5a4a86', purple: '#5a4a86',
+  rose: '#c98ab0', rosa: '#c98ab0',
+  black: '#241d14', nero: '#241d14',
+}
+export function litColorHex(color?: string): string | null {
+  if (!color) return null
+  return COLOR_HEX[color.trim().toLowerCase()] || null
+}
+
+// Map a breviary-reported season string → one of our SeasonIds, or null if it
+// isn't one of the six Roman seasons we theme (e.g. a future Byzantine season →
+// null → caller uses a neutral ornament + the day's colour as accent).
+export function seasonIdFromString(s?: string): SeasonId | null {
+  if (!s) return null
+  const t = s.toLowerCase()
+  if (/advent|avvento/.test(t)) return 'advent'
+  if (/christmas|natale|nativity/.test(t)) return 'christmas'
+  if (/lent|quaresima/.test(t)) return 'lent'
+  if (/easter|pasqua/.test(t)) return 'easter'
+  if (/pentecost|whitsun|pentecoste/.test(t)) return 'pentecost'
+  if (/ordinary|ordinario|trinity|per annum/.test(t)) return 'ordinary'
+  return null
+}
+
 // ── date helpers (work in local time, date-only) ──
 function ymd(y: number, m: number, d: number): Date { return new Date(y, m - 1, d) }
 function addDays(date: Date, n: number): Date {

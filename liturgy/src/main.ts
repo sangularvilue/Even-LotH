@@ -2,10 +2,10 @@ import './styles.css'
 import { createLiturgyController } from './liturgy-controller'
 import { loadSettings, saveSettings } from './settings'
 import { showBreviaryPicker } from './breviary-picker'
-import { getBreviary, localeFor, type BreviarySource, type Locale } from './breviaries'
+import { getBreviary, localeFor, DEFAULT_BREVIARY_ID, type BreviarySource, type Locale } from './breviaries'
 import { prefetchWeek, nextNDates, type PrefetchProgress } from './api-client'
 import { clearCache, cacheStats } from './cache'
-import { getLiturgicalSeason, SEASON_STYLE, type SeasonId } from './liturgical-season'
+import { getLiturgicalSeason, SEASON_STYLE, litColorHex, type SeasonId } from './liturgical-season'
 import { icon, fleuron, adventCandles, christmasWreath, easterTomb, pentecostDove } from './illum-heroes'
 import type { LiturgyPhase, HourInfo, ScrollMode } from './types'
 
@@ -16,10 +16,10 @@ type Strings = {
   s: Record<SeasonId, string>
   nowGlasses: string; hoursHead: string; settingsHead: string; advanced: string
   alleluia: string; comeSpirit: string; noel: string
-  rows: { breviary: string; scroll: string; tap: string; sec: string; visible: string }
+  rows: { breviary: string; scroll: string; tap: string; sec: string; visible: string; silence: string; silenceSec: string }
   modes: Record<ScrollMode, string>
   onWord: string; offWord: string
-  ui: { prev: string; next: string; stop: string; fol: string; of: string; reading: string }
+  ui: { prev: string; next: string; stop: string; fol: string; of: string; reading: string; play: string; pause: string }
 }
 
 const STRINGS: Record<Locale, Strings> = {
@@ -28,30 +28,30 @@ const STRINGS: Record<Locale, Strings> = {
     s: { advent: 'Advent', christmas: 'Christmastide', ordinary: 'Ordinary Time', lent: 'Lent', easter: 'Eastertide', pentecost: 'Pentecost' },
     nowGlasses: 'Now on the glasses', hoursHead: 'The Hours of the Day', settingsHead: 'Settings', advanced: 'Advanced · event log & cache',
     alleluia: 'Alleluia', comeSpirit: 'Come, Holy Spirit', noel: 'Venite adoremus',
-    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible hours' },
+    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible hours', silence: 'Silence pauses', silenceSec: 'Silence (sec)' },
     modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
     onWord: 'enabled', offWord: 'disabled',
-    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading' },
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause' },
   },
   it: {
     title: 'Liturgia delle Ore',
     s: { advent: 'Avvento', christmas: 'Tempo di Natale', ordinary: 'Tempo Ordinario', lent: 'Quaresima', easter: 'Tempo di Pasqua', pentecost: 'Pentecoste' },
     nowGlasses: 'Ora sugli occhiali', hoursHead: 'Le Ore del giorno', settingsHead: 'Impostazioni', advanced: 'Avanzate · registro & cache',
     alleluia: 'Alleluia', comeSpirit: 'Vieni, Spirito Santo', noel: 'Venite adoriamo',
-    rows: { breviary: 'Breviario', scroll: 'Scorrimento', tap: 'Tocca per avanzare', sec: 'Secondi per pagina', visible: 'Ore visibili' },
+    rows: { breviary: 'Breviario', scroll: 'Scorrimento', tap: 'Tocca per avanzare', sec: 'Secondi per pagina', visible: 'Ore visibili', silence: 'Pause di silenzio', silenceSec: 'Silenzio (sec)' },
     modes: { manual: 'Manuale', auto: 'Auto', 'head-gesture': 'Gesti della testa' },
     onWord: 'attivo', offWord: 'disattivo',
-    ui: { prev: 'indietro', next: 'avanti', stop: 'ferma', fol: 'fol.', of: 'di', reading: 'Lettura' },
+    ui: { prev: 'indietro', next: 'avanti', stop: 'ferma', fol: 'fol.', of: 'di', reading: 'Lettura', play: 'riprendi', pause: 'pausa' },
   },
   ord: {
     title: 'The Daily Office',
     s: { advent: 'Advent', christmas: 'Christmastide', ordinary: 'Time after Trinity', lent: 'Lent', easter: 'Eastertide', pentecost: 'Whitsun' },
     nowGlasses: 'Now on the glasses', hoursHead: 'The Offices of the Day', settingsHead: 'Settings', advanced: 'Advanced · event log & cache',
     alleluia: 'Alleluia', comeSpirit: 'Come, Holy Ghost', noel: 'O come, let us adore him',
-    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible offices' },
+    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible offices', silence: 'Silent pauses', silenceSec: 'Silence (sec)' },
     modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
     onWord: 'enabled', offWord: 'disabled',
-    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading' },
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause' },
   },
 }
 
@@ -119,12 +119,15 @@ async function bootstrap() {
   document.documentElement.dataset.theme = resolveDark() ? 'dark' : 'light'
   document.documentElement.dataset.season = season
 
-  let settings = loadSettings()
+  const settings = loadSettings()
+  // Render immediately with the chosen breviary (or the default) so a session
+  // launched directly from the glasses never hangs waiting for a phone tap.
+  renderApp(getBreviary(settings.breviaryId ?? DEFAULT_BREVIARY_ID))
+  // True first run (no choice yet): offer the picker non-blockingly; the app is
+  // already live with the default in the meantime. Reload to apply a pick.
   if (settings.breviaryId == null) {
-    await showBreviaryPicker()
-    settings = loadSettings()
+    void showBreviaryPicker().then((id) => { if (id) location.reload() })
   }
-  renderApp(getBreviary(settings.breviaryId))
 }
 void bootstrap()
 
@@ -192,6 +195,9 @@ function settingsBlock(breviary: BreviarySource, L: Strings): string {
     <div class="ilp-setrow"><span class="k">${esc(L.rows.tap)}</span><span class="v">
       <select id="set-tap"><option value="1"${s.tapToAdvance ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.tapToAdvance ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.sec)}</span><span class="v"><input id="set-seconds" type="number" min="2" max="60" step="1" value="${s.autoScrollSeconds}" style="width:48px"></span></div>
+    <div class="ilp-setrow"><span class="k">${esc(L.rows.silence)}</span><span class="v">
+      <select id="set-silence"><option value="1"${s.silenceEnabled ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.silenceEnabled ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
+    <div class="ilp-setrow"><span class="k">${esc(L.rows.silenceSec)}</span><span class="v"><input id="set-silence-seconds" type="number" min="0" max="120" step="1" value="${s.silenceSeconds}" style="width:48px"></span></div>
     <div class="ilp-setrow tap" id="visible-row" style="border-bottom:none"><span class="k">${esc(L.rows.visible)}</span><span class="v" id="visible-val"></span></div>
     <div id="hour-toggles" class="ilp-toggle-grid" hidden></div>
   </div>
@@ -221,7 +227,7 @@ function illuminatedMarkup(breviary: BreviarySource, L: Strings, season: SeasonI
   return `<div class="ilp">
     ${seasonHeader(breviary, L, season, adventWeek, dark, weekday, dateStr)}
     <div class="ilp-body">
-      <div class="ilp-head">${esc(L.s[season])}</div>
+      <div class="ilp-head" id="day-title">${esc(L.s[season])}</div>
       <div id="hour-list"></div>
     </div>
     ${glassesPanelShell(L)}
@@ -238,7 +244,7 @@ function lentMarkup(breviary: BreviarySource, L: Strings): string {
       <div class="lent-title">${esc(L.title)}</div>
       <div class="lent-season">${esc(L.s.lent)}</div>
     </div>
-    <div class="lent-meta">${esc(L.s.lent.toUpperCase())} · NO ${esc(L.alleluia.toUpperCase())}</div>
+    <div class="lent-meta" id="day-title">${esc(L.s.lent.toUpperCase())} · NO ${esc(L.alleluia.toUpperCase())}</div>
     <div class="lent-sec">${esc(L.hoursHead)}</div>
     <div id="hour-list"></div>
     <div class="lent-sec">${esc(L.nowGlasses)}</div>
@@ -335,11 +341,14 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     const fol = st.pageIndex + 1, total = st.pages.length
     const p = parsePage(page)
     const hour = activeHourName || ''
+    const isAuto = loadSettings().scrollMode === 'auto'
+    const paused = !!st.autoPaused
+    const ppLabel = paused ? `▶ ${L.ui.play}` : `❚❚ ${L.ui.pause}`
     if (lent) {
       panel.innerHTML = `<div class="bh">${esc(hour)}</div>
         <div class="bt">${esc(p.section || '—')}</div>
         <div class="bs">${esc(p.sub || '')}${p.sub ? ' — ' : ''}${fol} / ${total}</div>
-        <div class="bctrl"><button class="bbtn" data-act="prev">${esc(L.ui.prev)}</button><button class="bbtn" data-act="next">${esc(L.ui.next)}</button><button class="bbtn x" data-act="stop">${esc(L.ui.stop)}</button></div>`
+        <div class="bctrl">${isAuto ? `<button class="bbtn" data-act="playpause">${esc(ppLabel)}</button>` : ''}<button class="bbtn" data-act="prev">${esc(L.ui.prev)}</button><button class="bbtn" data-act="next">${esc(L.ui.next)}</button><button class="bbtn x" data-act="stop">${esc(L.ui.stop)}</button></div>`
       return
     }
     const pct = total > 1 ? Math.round((fol / total) * 100) : 100
@@ -355,7 +364,16 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
       </div>
       ${couplet}
       <div class="ilp-prog"><span class="lbl">${esc(L.ui.fol)} ${fol}</span><div class="bar"><div class="fill" style="width:${pct}%"></div></div><span class="lbl">${esc(L.ui.of)} ${total}</span></div>
-      <div class="ilp-ctrls"><span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
+      <div class="ilp-ctrls">${isAuto ? `<span data-act="playpause">${esc(ppLabel)}</span>` : ''}<span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
+  }
+
+  function updateDay() {
+    const el = $('day-title'); if (!el) return
+    const day = (controller.getState() as any).day
+    if (!day || !day.title) return
+    const dot = litColorHex(day.color)
+    const dotHtml = dot ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${dot};margin-right:7px;vertical-align:middle"></span>` : ''
+    el.innerHTML = dotHtml + esc(lent ? String(day.title).toUpperCase() : day.title)
   }
 
   function updateVisibleVal() {
@@ -381,7 +399,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     setPhase,
     log: appendLog,
     onReadingChanged: () => refreshPanel(),
-    onHoursLoaded(hours) { currentHours = hours; renderHourButtons(hours); updateVisibleVal() },
+    onHoursLoaded(hours) { currentHours = hours; renderHourButtons(hours); updateVisibleVal(); updateDay() },
   })
 
   refreshPanel()
@@ -397,7 +415,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     activeHourName = currentHours.find((h) => h.slug === slug)?.name ?? slug
     visited.add(slug)
     renderHourButtons(currentHours)
-    void controller.selectHour(slug).then(() => { renderHourButtons(currentHours); refreshPanel() })
+    void controller.selectHour(slug).then(() => { renderHourButtons(currentHours); refreshPanel(); updateDay() })
   })
 
   panel.addEventListener('click', (e) => {
@@ -405,6 +423,11 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     if (act === 'prev') void controller.scrollUp().then(refreshPanel)
     else if (act === 'next') void controller.scrollDown().then(refreshPanel)
     else if (act === 'stop') { controller.stopReading(); activeSlug = null; renderHourButtons(currentHours); refreshPanel() }
+    else if (act === 'playpause') {
+      const paused = !!(controller.getState() as any).autoPaused
+      if (paused) controller.resumeAuto(); else controller.pauseAuto()
+      refreshPanel()
+    }
   })
 
   $('brev-row')?.addEventListener('click', async () => {
@@ -423,6 +446,14 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   $('set-seconds')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)
     if (val >= 2 && val <= 60) { const s = loadSettings(); s.autoScrollSeconds = val; saveSettings(s); appendLog(`Auto-scroll: ${val}s`) }
+  })
+  $('set-silence')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.silenceEnabled = (e.target as HTMLSelectElement).value === '1'; saveSettings(s)
+    appendLog(`Silence pauses: ${s.silenceEnabled ? 'on' : 'off'}`)
+  })
+  $('set-silence-seconds')?.addEventListener('change', (e) => {
+    const val = Number((e.target as HTMLInputElement).value)
+    if (val >= 0 && val <= 120) { const s = loadSettings(); s.silenceSeconds = val; saveSettings(s); appendLog(`Silence: ${val}s`) }
   })
   $('visible-row')?.addEventListener('click', () => {
     const grid = $('hour-toggles'); if (grid) grid.hidden = !grid.hidden

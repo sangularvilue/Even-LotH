@@ -182,3 +182,24 @@ export function prettyName(slug) {
 }
 
 export const IT_OFFICE_SLUGS = Object.keys(SLUG_MAP)
+
+// The liturgical day title from liturgiadelleore's own calendar (the first
+// non-empty <FONT CLASS=Titolo>, e.g. "OTTAVA SETTIMANA DEL TEMPO ORDINARIO - Venerdì").
+export async function extractDayTitle(date) {
+  const itDate = toItDate(date)
+  const full = await fetchOfficeDay(itDate, 2)
+  const accents = {
+    '&agrave;': 'à', '&egrave;': 'è', '&eacute;': 'é', '&igrave;': 'ì', '&ograve;': 'ò', '&ugrave;': 'ù',
+    '&Agrave;': 'À', '&Egrave;': 'È', '&Igrave;': 'Ì', '&Ograve;': 'Ò', '&Ugrave;': 'Ù', '&nbsp;': ' ',
+  }
+  const decode = (s) => s
+    .replace(/&[A-Za-z]+;/g, (e) => accents[e] || '')
+    .replace(/&#x?[0-9a-f]+;/gi, '')
+  const re = /<FONT\s+CLASS=Titolo>([\s\S]*?)<\/FONT>/gi
+  let m
+  while ((m = re.exec(full)) !== null) {
+    const t = clean(decode(m[1].replace(/<[^>]+>/g, '')))
+    if (t) return t
+  }
+  return ''
+}

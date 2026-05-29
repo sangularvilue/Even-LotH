@@ -33,6 +33,8 @@ export default async function handler(req, res) {
       url: 'https://dwdo.uk/office.html',
     })
     await enrichLessons(result.sections, readings, fetchKjvText)
+    // The Ordinariate's own day/feast (from dwdo's calendar engine).
+    if (dayTitle) result.day = { title: dayTitle }
     res.json(result)
   } catch (err) {
     res.status(502).json({ error: 'Failed to render Ordinariate office', detail: err.message, slug, date: iso })

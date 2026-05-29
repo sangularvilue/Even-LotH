@@ -10,16 +10,27 @@ export type PrayerSection = {
   text: string
 }
 
+// The liturgical day as reported by the chosen breviary's OWN source (not a
+// computed Roman calendar). `season`/`color` are free strings from the source
+// (e.g. divineoffice's "White"); used for the accent when present.
+export type LiturgicalDay = {
+  title: string
+  color?: string
+  season?: string
+}
+
 export type HourContent = {
   slug: string
   name: string
   date: string
   sections: PrayerSection[]
+  day?: LiturgicalDay
 }
 
 export type HoursIndex = {
   date: string
   hours: HourInfo[]
+  day?: LiturgicalDay
 }
 
 export type PrayerPage = {
@@ -40,6 +51,8 @@ export type LiturgySettings = {
   breviaryId: string | null  // null = not yet selected (triggers picker)
   scrollMode: ScrollMode
   autoScrollSeconds: number
+  silenceEnabled: boolean    // extra contemplative pause after psalms/canticles/reading
+  silenceSeconds: number
   tapToAdvance: boolean
   hiddenHours: string[]
   fontSize: number

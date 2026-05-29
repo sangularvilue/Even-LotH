@@ -63,7 +63,12 @@ export default async function handler(req, res) {
       })
     }
 
-    res.json({ date: requestedDate, hours })
+    // The liturgical day + colour, straight from divineoffice's own calendar.
+    const day = dayData.description
+      ? { title: dayData.description, color: dayData.color || undefined }
+      : undefined
+
+    res.json({ date: requestedDate, hours, day })
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch hours', detail: err.message })
   }

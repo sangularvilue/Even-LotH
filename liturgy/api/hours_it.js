@@ -4,6 +4,7 @@
 // So this endpoint just returns the canonical list.
 
 import { IT_HOUR_SLUGS, prettyName, normalizeDate } from '../lib/scrape_it.js'
+import { extractDayTitle } from '../lib/scrape_office_it.js'
 
 function todayCompact(tzOffsetMinutes) {
   const now = new Date()
@@ -11,7 +12,7 @@ function todayCompact(tzOffsetMinutes) {
   return `${local.getUTCFullYear()}${String(local.getUTCMonth() + 1).padStart(2, '0')}${String(local.getUTCDate()).padStart(2, '0')}`
 }
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=86400')
 
@@ -29,5 +30,9 @@ export default function handler(req, res) {
   // appended after the Office hours. Listed last so it reads as an extra.
   hours.push({ slug: 'lezionario', name: 'Lezionario (Messa)', date: iso })
 
-  res.json({ date: iso, hours })
+  // The liturgical day from liturgiadelleore's own calendar (best-effort).
+  let day
+  try { const title = await extractDayTitle(iso); if (title) day = { title } } catch { /* ignore */ }
+
+  res.json({ date: iso, hours, day })
 }

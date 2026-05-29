@@ -15,7 +15,7 @@ import { fetchHours, fetchHour } from './api-client'
 import { loadSettings, getBreviaryId } from './settings'
 import { getBreviary } from './breviaries'
 import { startHeadGestures, stopHeadGestures } from './head-gestures'
-import type { HourInfo, LiturgyPhase, PrayerSection } from './types'
+import type { HourInfo, LiturgyPhase, PrayerSection, LiturgicalDay } from './types'
 
 type ControllerDeps = {
   setPhase?: (phase: LiturgyPhase) => void
@@ -36,7 +36,10 @@ type ControllerState = {
   hours: HourInfo[]
   selectedHourIndex: number
   pages: string[]
+  sectionLabels: string[]   // section label for each page (parallel to pages)
   pageIndex: number
+  autoPaused: boolean       // auto-advance paused by a manual interaction
+  day?: LiturgicalDay       // liturgical day from the breviary's own calendar
 }
 
 const DISPLAY_WIDTH = 576
@@ -252,59 +255,49 @@ function formatLines(rawLines: string[]): { text: string; pageBreak: boolean }[]
   return result
 }
 
-function paginateSections(sections: PrayerSection[]): string[] {
-  // Build all formatted lines with page break markers
-  const entries: { text: string; pageBreak: boolean }[] = []
+// Returns the paginated page texts plus a parallel array of the section label
+// each page belongs to (used by auto-advance to place silence at section ends).
+function paginateSections(sections: PrayerSection[]): { pages: string[]; sectionLabels: string[] } {
+  // Build all formatted lines with page break markers, tagged by section.
+  const entries: { text: string; pageBreak: boolean; section: string }[] = []
 
   for (const section of sections) {
+    const label = section.label || ''
     // For canticle sections, the label (e.g. "CANTICLE OF SIMEON") becomes
     // part of the title header — the scripture ref in the body takes over
-    const isCanticleSection = /^canticle of/i.test(section.label || '')
-    if (section.label && !isCanticleSection) {
-      entries.push({ text: '', pageBreak: false })
-      entries.push({ text: `== ${section.label} ==`, pageBreak: true })
-      entries.push({ text: '', pageBreak: false })
+    const isCanticleSection = /^canticle of/i.test(label)
+    if (label && !isCanticleSection) {
+      entries.push({ text: '', pageBreak: false, section: label })
+      entries.push({ text: `== ${label} ==`, pageBreak: true, section: label })
+      entries.push({ text: '', pageBreak: false, section: label })
     }
     if (isCanticleSection) {
-      // Insert the canticle name as a page-breaking title
-      entries.push({ text: section.label, pageBreak: true })
+      entries.push({ text: label, pageBreak: true, section: label })
     }
 
-    const rawLines = section.text
-      .split('\n')
-      .map(l => l.trim())
-      .filter(l => l.length > 0)
-
-    entries.push(...formatLines(rawLines))
+    const rawLines = section.text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+    for (const e of formatLines(rawLines)) entries.push({ ...e, section: label })
   }
 
   // Paginate — respect page breaks and LINES_PER_PAGE limit
   const pages: string[] = []
+  const sectionLabels: string[] = []
   let currentPage: string[] = []
+  let pageSection = ''
+  const flush = () => { pages.push(currentPage.join('\n')); sectionLabels.push(pageSection); currentPage = [] }
 
   for (const entry of entries) {
-    if (entry.pageBreak && currentPage.some(l => l.trim().length > 0)) {
-      // Flush current page
-      pages.push(currentPage.join('\n'))
-      currentPage = []
-    }
-
+    if (entry.pageBreak && currentPage.some(l => l.trim().length > 0)) flush()
     const wrapped = entry.text === '' ? [''] : wordWrap(entry.text, CHARS_PER_LINE)
     for (const wline of wrapped) {
-      if (currentPage.length >= LINES_PER_PAGE && currentPage.some(l => l.trim().length > 0)) {
-        pages.push(currentPage.join('\n'))
-        currentPage = []
-      }
+      if (currentPage.length >= LINES_PER_PAGE && currentPage.some(l => l.trim().length > 0)) flush()
+      if (currentPage.length === 0) pageSection = entry.section
       currentPage.push(wline)
     }
   }
+  if (currentPage.some(l => l.trim().length > 0)) flush()
 
-  // Flush remaining
-  if (currentPage.some(l => l.trim().length > 0)) {
-    pages.push(currentPage.join('\n'))
-  }
-
-  return pages.length > 0 ? pages : ['(empty)']
+  return pages.length > 0 ? { pages, sectionLabels } : { pages: ['(empty)'], sectionLabels: [''] }
 }
 
 export function createLiturgyController({ setPhase, log, onReadingChanged, onHoursLoaded }: ControllerDeps) {
@@ -318,11 +311,14 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     hours: [],
     selectedHourIndex: 0,
     pages: [],
+    sectionLabels: [],
     pageIndex: 0,
+    autoPaused: false,
   }
 
   let currentLayout: 'hours' | 'reading' | 'loading' | null = null
   let spinnerIntervalId: number | null = null
+  let autoTimerId: number | null = null
 
   function publishPhase(phase: LiturgyPhase): void {
     setPhase?.(phase)
@@ -680,7 +676,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
         stopSpinner()
 
-        state.pages = paginateSections(content.sections)
+        if (content.day) state.day = content.day
+        ;({ pages: state.pages, sectionLabels: state.sectionLabels } = paginateSections(content.sections))
         state.pageIndex = 0
         state.view = 'reading'
         publishPhase('reading')
@@ -688,6 +685,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
         await setupReadingLayout()
         void startHeadGestureMode()
+        startAutoAdvance()
       } catch (err) {
         stopSpinner()
         log(`Error: ${err}`)
@@ -699,6 +697,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   async function onReadingEvent(eventType: number | undefined): Promise<void> {
+    pauseAuto() // any on-glasses interaction pauses hands-free advance
     if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       void stopHeadGestureMode()
       state.pages = []
@@ -784,6 +783,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       ])
 
       state.hours = [...index.hours]
+      state.day = index.day // liturgical day from this breviary's own calendar
 
       // Append yesterday's evening & night office for night workers, when the
       // active breviary supports it. Labels follow the breviary's language.
@@ -838,7 +838,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       stopSpinner()
 
-      state.pages = paginateSections(content.sections)
+      if (content.day) state.day = content.day
+      ;({ pages: state.pages, sectionLabels: state.sectionLabels } = paginateSections(content.sections))
       state.pageIndex = 0
       state.view = 'reading'
       publishPhase('reading')
@@ -848,6 +849,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         await setupReadingLayout()
         void startHeadGestureMode()
       }
+      startAutoAdvance()
     } catch (err) {
       stopSpinner()
       log(`Error: ${err}`)
@@ -855,9 +857,56 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
+  // ── Auto-advance (hands-free pacing) + contemplative silence ──
+  function classifySection(label: string): 'psalm' | 'canticle' | 'reading' | 'other' {
+    const u = (label || '').toUpperCase()
+    if (/\b(SALMO|PSALM)\b/.test(u)) return 'psalm'
+    if (/\b(CANTICO|CANTICLE|BENEDICTUS|MAGNIFICAT|NUNC|TE DEUM|ZACCARIA|BEATA VERGINE|SIMEONE)\b/.test(u)) return 'canticle'
+    if (/\b(LETTURA|READING|LESSON|PRIMA|SECONDA|EPISTLE|VANGELO|GOSPEL)\b/.test(u)) return 'reading'
+    return 'other'
+  }
+  function clearAutoTimer(): void {
+    if (autoTimerId !== null) { window.clearTimeout(autoTimerId); autoTimerId = null }
+  }
+  // Self-scheduling: waits the page interval, or a longer silence after a
+  // psalm/canticle/reading, then advances the glasses one page.
+  function scheduleAuto(): void {
+    clearAutoTimer()
+    if (state.view !== 'reading' || state.autoPaused) return
+    const i = state.pageIndex
+    if (i >= state.pages.length - 1) return // reached the end
+    const s = loadSettings()
+    const boundary = state.sectionLabels[i] !== state.sectionLabels[i + 1]
+    const finished = classifySection(state.sectionLabels[i] || '')
+    const silence = s.silenceEnabled && boundary && finished !== 'other'
+    const delayMs = Math.max(1, (silence ? s.silenceSeconds : s.autoScrollSeconds)) * 1000
+    autoTimerId = window.setTimeout(async () => {
+      autoTimerId = null
+      if (state.view !== 'reading' || state.autoPaused) return
+      if (state.pageIndex < state.pages.length - 1) {
+        state.pageIndex++
+        await updatePageText()
+        onReadingChanged?.('', progressStr())
+      }
+      scheduleAuto()
+    }, delayMs)
+  }
+  function startAutoAdvance(): void {
+    if (loadSettings().scrollMode !== 'auto') return
+    state.autoPaused = false
+    scheduleAuto()
+  }
+  function pauseAuto(): void { state.autoPaused = true; clearAutoTimer() }
+  function resumeAuto(): void {
+    if (loadSettings().scrollMode !== 'auto' || state.view !== 'reading') return
+    state.autoPaused = false
+    scheduleAuto()
+  }
+
   // Companion-driven page navigation (mirrors the glasses SCROLL events) so the
   // "Now on the glasses" panel's prev/next controls work from the phone.
   async function scrollDown(): Promise<void> {
+    pauseAuto() // manual interaction pauses hands-free advance
     if (state.view !== 'reading') return
     if (state.pageIndex < state.pages.length - 1) {
       state.pageIndex++
@@ -866,6 +915,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
   async function scrollUp(): Promise<void> {
+    pauseAuto()
     if (state.view !== 'reading') return
     if (state.pageIndex > 0) {
       state.pageIndex--
@@ -875,6 +925,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   function stopReading(): void {
+    clearAutoTimer()
     void stopHeadGestureMode()
     stopSpinner()
     state.pages = []
@@ -903,6 +954,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     selectHour,
     scrollUp,
     scrollDown,
+    pauseAuto,
+    resumeAuto,
     stopReading,
     renderHourList,
     getState: () => ({ ...state }),
