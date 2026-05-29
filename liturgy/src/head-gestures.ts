@@ -1,16 +1,15 @@
 /**
- * Head-tilt page turning for the G2 — pitch-based, hold-to-repeat.
+ * Head-tilt page turning for the G2 — hold-to-repeat.
  *
- * Tilt/look UP past the dead-zone angle → advance a page, and keep advancing
- * ONE PAGE PER SECOND while held up. Tilt DOWN → go back, one page/second.
- * Within the dead zone nothing happens (so casual glances don't flip pages).
+ * Tilt your head RIGHT past the dead-zone angle → advance a page, and keep
+ * advancing ONE PAGE PER SECOND while held. Tilt LEFT → go back, one page/sec.
+ * Within the dead zone nothing happens (so casual movement doesn't flip pages).
  * The dead-zone angle is user-configurable (settings.headTiltDeg, default 10°).
  *
- * Pitch is derived from the accelerometer gravity vector in the forward/back
- * (Y) vs vertical (Z) plane — calibrated to real G2 data (units are g, gravity
- * ~1.0 on Z at rest). Axis/sign/timing are tunable at runtime via
- *   globalThis.__HG = { deadzone, repeatMs, invert, smooth, fb }
- * for on-device calibration from the in-app Event Log.
+ * The tilt angle is derived from the accelerometer gravity vector
+ * (atan2 of the responding axis vs vertical) — calibrated to real G2 data
+ * (units are g, gravity ~1.0 on Z at rest). Axis/sign/timing are tunable at
+ * runtime via globalThis.__HG = { deadzone, repeatMs, invert, smooth, fb }.
  */
 
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk'
@@ -82,9 +81,9 @@ export function handleImuEvent(event: any): boolean {
   if (!tiltActive || now - lastEmit >= t.repeatMs) {
     tiltActive = true
     lastEmit = now
-    const up = (dev > 0) !== t.invert // up tilt → next page by default
-    logCb?.(`Head tilt ${up ? 'up → next' : 'down → prev'} (${dev.toFixed(0)}°)`)
-    callback?.(up ? 'scroll_down' : 'scroll_up')
+    const right = (dev > 0) !== t.invert // tilt right → next page
+    logCb?.(`Head tilt ${right ? 'right → next' : 'left → prev'} (${dev.toFixed(0)}°)`)
+    callback?.(right ? 'scroll_down' : 'scroll_up')
   }
   return true
 }
@@ -104,7 +103,7 @@ export async function startHeadGestures(bridge: EvenAppBridge, cb: GestureCallba
   lastEmit = 0
   const ok = await setImu(bridge, true)
   active = ok
-  logCb?.(ok ? `Head tilt on — up=next, down=prev (dead zone ${deadzoneDeg()}°)` : 'Head gestures: IMU unavailable')
+  logCb?.(ok ? `Head tilt on — right=next, left=prev (dead zone ${deadzoneDeg()}°)` : 'Head gestures: IMU unavailable')
   return ok
 }
 
