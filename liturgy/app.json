@@ -2,7 +2,7 @@
   "package_id": "com.bnm.evendev.liturgy",
   "edition": "202601",
   "name": "Liturgy of the Hours",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "min_app_version": "2.0.0",
   "min_sdk_version": "0.0.7",
   "tagline": "Pray the ancient prayer of the Church on your G2.",
