@@ -14,7 +14,7 @@ import { getRawEventType, normalizeEventType } from './shared/even-events'
 import { fetchHours, fetchHour } from './api-client'
 import { loadSettings, getBreviaryId } from './settings'
 import { getBreviary } from './breviaries'
-import { startHeadGestures, stopHeadGestures } from './head-gestures'
+import { startHeadGestures, stopHeadGestures, handleImuEvent, isHeadGesturesActive } from './head-gestures'
 import type { HourInfo, LiturgyPhase, PrayerSection, LiturgicalDay } from './types'
 
 type ControllerDeps = {
@@ -612,6 +612,10 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     if (state.eventLoopRegistered) return
 
     bridge.onEvenHubEvent(async (event) => {
+      // IMU samples flow through this same handler — consume them for head
+      // gestures before the normal tap/scroll/list handling.
+      if (isHeadGesturesActive() && handleImuEvent(event)) return
+
       const rawEventType = getRawEventType(event)
       let eventType = normalizeEventType(rawEventType, OsEventTypeList)
 

@@ -1,14 +1,21 @@
 /**
- * Head gesture detection using the G2 IMU.
+ * Head-gesture page turning for the G2, using the IMU.
  *
- * Detects deliberate head jerks and maps them to actions:
- *   - Nod down  → next page (scroll down)
- *   - Nod up    → previous page (scroll up)
- *   - Tilt right → tap / select
- *   - Tilt left  → double-tap / back
+ * Gesture (per Will): a quick head TURN and return —
+ *   - turn RIGHT and back  → next page  (emits 'scroll_down')
+ *   - turn LEFT and back    → previous page (emits 'scroll_up')
  *
- * Uses energy-based jerk detection on the accelerometer axes
- * with a dead zone and cooldown to avoid false triggers.
+ * A head turn is yaw (rotation about the vertical/gravity axis). We detect it
+ * preferably from the GYROSCOPE (yaw-rate spike on the gravity-aligned axis);
+ * if only accelerometer is reported, we fall back to the lateral acceleration
+ * TRANSIENT a quick turn produces. Direction = sign of the spike; the long
+ * cooldown absorbs the "and back" return so one turn = one page.
+ *
+ * IMPORTANT: `imuControl` and the IMU report shape are not in the installed SDK
+ * types (only in the live docs), and the axis orientation/units are
+ * undocumented. So detection is adaptive + heavily logged, and thresholds are
+ * tunable at runtime via `globalThis.__HG = { accel, gyro, cooldown, invert }`
+ * for on-device calibration from the in-app Event Log.
  */
 
 import type { EvenAppBridge } from '@evenrealities/even_hub_sdk'
@@ -16,144 +23,121 @@ import type { EvenAppBridge } from '@evenrealities/even_hub_sdk'
 export type GestureAction = 'scroll_up' | 'scroll_down' | 'tap' | 'double_tap'
 export type GestureCallback = (action: GestureAction) => void
 
-// Tuning parameters
-const JERK_THRESHOLD = 1.5    // acceleration spike to count as a jerk
-const COOLDOWN_MS = 600       // minimum ms between gestures
-const SETTLE_SAMPLES = 3      // ignore first N samples after starting IMU
-const REPORT_FREQ_MS = 100    // IMU report interval
+const REPORT_FREQ_MS = 100   // 10 Hz — within the documented 100–1000ms range
+const DEFAULTS = { accel: 2.0, gyro: 1.2, cooldown: 800, invert: false }
 
 let active = false
 let callback: GestureCallback | null = null
-let logCallback: ((msg: string) => void) | null = null
-let lastGestureTime = 0
-let sampleCount = 0
+let logCb: ((msg: string) => void) | null = null
+let lastGesture = 0
+let samples = 0
 
-// Baseline (running average of recent values)
-let baseX = 0
-let baseY = 0
-let baseZ = 0
-const SMOOTH = 0.15  // exponential moving average factor
+// EMA baselines (so we measure transients, not the resting gravity vector)
+const base = { ax: 0, ay: 0, az: 0 }
+let baseReady = false
+const SMOOTH = 0.2
 
-function processImuData(x: number, y: number, z: number): void {
-  sampleCount++
+function tune() {
+  const o = (globalThis as any).__HG || {}
+  return { ...DEFAULTS, ...o }
+}
 
-  // Let the baseline settle before detecting
-  if (sampleCount <= SETTLE_SAMPLES) {
-    baseX = x
-    baseY = y
-    baseZ = z
-    return
+// Pull accel (+ optional gyro) out of whatever shape the host sends.
+function extract(event: any): { ax: number; ay: number; az: number; gx?: number; gy?: number; gz?: number } | null {
+  const d = event?.imuEvent ?? event?.imu ?? event?.sensorEvent ?? event?.motionEvent
+    ?? event?.motion ?? event?.sensor ?? event?.accelerometer ?? null
+  if (!d) return null
+  const num = (...keys: string[]) => { for (const k of keys) if (typeof d[k] === 'number') return d[k]; return undefined }
+  const ax = num('x', 'ax', 'accX', 'accelX', 'acc_x')
+  const ay = num('y', 'ay', 'accY', 'accelY', 'acc_y')
+  const az = num('z', 'az', 'accZ', 'accelZ', 'acc_z')
+  if (ax === undefined && ay === undefined && az === undefined) return null
+  return {
+    ax: ax ?? 0, ay: ay ?? 0, az: az ?? 0,
+    gx: num('gx', 'gyroX', 'gyro_x', 'rotX'),
+    gy: num('gy', 'gyroY', 'gyro_y', 'rotY'),
+    gz: num('gz', 'gyroZ', 'gyro_z', 'rotZ'),
+  }
+}
+
+function fire(action: GestureAction): void {
+  lastGesture = Date.now()
+  logCb?.(`Head turn → ${action === 'scroll_down' ? 'next' : 'prev'}`)
+  callback?.(action)
+}
+
+// True if the event was an IMU sample (consumed here), so the controller can
+// skip its normal tap/scroll handling for it.
+export function handleImuEvent(event: any): boolean {
+  const d = extract(event)
+  if (!d) return false
+  samples++
+
+  if (!baseReady || samples <= 3) {
+    base.ax = d.ax; base.ay = d.ay; base.az = d.az; baseReady = true
+    if (samples <= 12) logCb?.(`IMU ax=${d.ax.toFixed(2)} ay=${d.ay.toFixed(2)} az=${d.az.toFixed(2)}${d.gz !== undefined ? ` gz=${d.gz.toFixed(2)}` : ''}`)
+    return true
+  }
+  base.ax += (d.ax - base.ax) * SMOOTH
+  base.ay += (d.ay - base.ay) * SMOOTH
+  base.az += (d.az - base.az) * SMOOTH
+  if (samples <= 12) logCb?.(`IMU ax=${d.ax.toFixed(2)} ay=${d.ay.toFixed(2)} az=${d.az.toFixed(2)}${d.gz !== undefined ? ` gz=${d.gz.toFixed(2)}` : ''}`)
+
+  const t = tune()
+  if (Date.now() - lastGesture < t.cooldown) return true
+
+  // Which accel axis holds gravity at rest (largest |baseline|) → that's the
+  // vertical axis; yaw rotates about it.
+  const absB = { ax: Math.abs(base.ax), ay: Math.abs(base.ay), az: Math.abs(base.az) }
+  const gravAxis = absB.ax >= absB.ay && absB.ax >= absB.az ? 'ax' : absB.ay >= absB.az ? 'ay' : 'az'
+
+  let signal = 0
+  if (d.gx !== undefined || d.gy !== undefined || d.gz !== undefined) {
+    // Gyro present: yaw-rate is the gyro component on the gravity axis.
+    const g = { ax: d.gx ?? 0, ay: d.gy ?? 0, az: d.gz ?? 0 } as Record<string, number>
+    const yaw = g[gravAxis]
+    if (Math.abs(yaw) > t.gyro) signal = yaw
+  } else {
+    // Accel-only: use the larger of the two HORIZONTAL axes' transient.
+    const horiz = (['ax', 'ay', 'az'] as const).filter((k) => k !== gravAxis)
+    const devs = horiz.map((k) => d[k] - (base as any)[k])
+    const dev = Math.abs(devs[0]) >= Math.abs(devs[1]) ? devs[0] : devs[1]
+    if (Math.abs(dev) > t.accel) signal = dev
   }
 
-  // Update baseline with EMA
-  baseX = baseX * (1 - SMOOTH) + x * SMOOTH
-  baseY = baseY * (1 - SMOOTH) + y * SMOOTH
-  baseZ = baseZ * (1 - SMOOTH) + z * SMOOTH
-
-  // Compute deviation from baseline
-  const dx = x - baseX
-  const dy = y - baseY
-  const dz = z - baseZ
-
-  // Check cooldown
-  const now = Date.now()
-  if (now - lastGestureTime < COOLDOWN_MS) return
-
-  // Detect jerks on each axis
-  // G2 orientation: X = lateral (left/right tilt), Y = vertical (nod), Z = forward/back
-  // These may need to be remapped based on actual hardware orientation
-
-  let action: GestureAction | null = null
-
-  if (Math.abs(dy) > JERK_THRESHOLD && Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > Math.abs(dz)) {
-    // Strongest jerk is vertical
-    action = dy > 0 ? 'scroll_down' : 'scroll_up'
-  } else if (Math.abs(dx) > JERK_THRESHOLD && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > Math.abs(dz)) {
-    // Strongest jerk is lateral
-    action = dx > 0 ? 'tap' : 'double_tap'
+  if (signal !== 0) {
+    const right = (signal > 0) !== t.invert
+    fire(right ? 'scroll_down' : 'scroll_up')
   }
+  return true
+}
 
-  if (action && callback) {
-    lastGestureTime = now
-    callback(action)
-  }
+async function setImu(bridge: EvenAppBridge, on: boolean): Promise<boolean> {
+  const b = bridge as any
+  // Documented API first, then the older callEvenApp escape hatch.
+  try { if (typeof b.imuControl === 'function') { await b.imuControl(on, REPORT_FREQ_MS); return true } } catch { /* fall through */ }
+  try { await b.callEvenApp('imuControl', { isOpen: on, reportFrq: REPORT_FREQ_MS }); return true } catch { return false }
 }
 
 export async function startHeadGestures(bridge: EvenAppBridge, cb: GestureCallback, log?: (msg: string) => void): Promise<boolean> {
   callback = cb
-  logCallback = log ?? null
-  sampleCount = 0
-  lastGestureTime = 0
-
-  try {
-    // Try to enable IMU via the generic callEvenApp escape hatch
-    // since imuControl isn't in the typed SDK yet
-    logCallback?.('Attempting IMU start via callEvenApp...')
-    const result = await (bridge as any).callEvenApp('imuControl', {
-      isOpen: true,
-      reportFrq: REPORT_FREQ_MS,
-    })
-    logCallback?.(`IMU callEvenApp result: ${JSON.stringify(result)}`)
-
-    if (result === false || result === 'error') {
-      logCallback?.('IMU not available')
-      return false
-    }
-
-    // Listen for ALL events and log them to find IMU data format
-    bridge.onEvenHubEvent((event: any) => {
-      // Log every event to help discover the IMU data format
-      const keys = Object.keys(event || {}).filter(k => event[k] != null)
-      if (keys.length > 0) {
-        const preview = keys.map(k => {
-          const v = event[k]
-          if (typeof v === 'object') return `${k}:{${Object.keys(v).join(',')}}`
-          return `${k}:${String(v).slice(0, 20)}`
-        }).join(' ')
-        logCallback?.(`EVT: ${preview}`)
-      }
-
-      // Try every possible IMU data shape
-      const imuData = event.imuEvent ?? event.sensorEvent ?? event.motionEvent
-        ?? event.imu ?? event.sensor ?? event.motion ?? event.accelerometer
-      if (imuData) {
-        const x = imuData.x ?? imuData.accX ?? imuData.ax ?? 0
-        const y = imuData.y ?? imuData.accY ?? imuData.ay ?? 0
-        const z = imuData.z ?? imuData.accZ ?? imuData.az ?? 0
-        logCallback?.(`IMU: x=${x.toFixed(2)} y=${y.toFixed(2)} z=${z.toFixed(2)}`)
-        processImuData(x, y, z)
-      }
-    })
-
-    active = true
-    console.log('[HeadGestures] IMU started')
-    return true
-  } catch (err) {
-    console.log('[HeadGestures] Failed to start IMU:', err)
-    return false
-  }
+  logCb = log ?? null
+  samples = 0
+  baseReady = false
+  lastGesture = 0
+  const ok = await setImu(bridge, true)
+  active = ok
+  logCb?.(ok ? 'Head gestures: IMU on (turn right→next, left→prev)' : 'Head gestures: IMU unavailable')
+  return ok
 }
 
 export async function stopHeadGestures(bridge: EvenAppBridge): Promise<void> {
   if (!active) return
-  try {
-    await (bridge as any).callEvenApp('imuControl', {
-      isOpen: false,
-      reportFrq: 0,
-    })
-  } catch {}
+  await setImu(bridge, false)
   active = false
   callback = null
-  console.log('[HeadGestures] IMU stopped')
 }
 
 export function isHeadGesturesActive(): boolean {
   return active
-}
-
-/**
- * Adjust sensitivity. Lower = more sensitive, higher = less false positives.
- */
-export function setJerkThreshold(value: number): void {
-  (globalThis as any).__JERK_THRESHOLD = value
 }
