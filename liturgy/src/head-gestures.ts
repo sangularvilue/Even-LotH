@@ -27,7 +27,7 @@ const REPORT_FREQ_MS = 100   // ImuReportPace.P100 — fast, to catch a quick tu
 // Calibrated to real G2 data: accel is in g, gravity ~1.0 on one axis, a turn
 // deflects a horizontal axis ~0.4–0.5 g. Threshold sits between rest-jitter
 // (~0.03) and a real turn. `smooth` keeps the baseline at rest, not chasing.
-const DEFAULTS = { accel: 0.3, gyro: 1.2, cooldown: 700, invert: false, smooth: 0.06 }
+const DEFAULTS = { accel: 0.18, gyro: 1.2, cooldown: 500, invert: false, smooth: 0.06 }
 
 let active = false
 let callback: GestureCallback | null = null
