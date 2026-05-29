@@ -192,3 +192,34 @@ body { background: var(--paper); color: var(--ink); -webkit-font-smoothing: anti
 .bp.lent .bp-sub { font-style: normal; font-family: ui-monospace, monospace; font-size: 11px; text-transform: uppercase; }
 .bp.lent .bp-name { font-family: ui-monospace, monospace; text-transform: uppercase; font-size: 15px; font-weight: 700; }
 .bp.lent .bp-back, .bp.lent .bp-pub, .bp.lent .bp-note { font-family: ui-monospace, monospace; }
+
+/* ─────────────────────── Phone reading view (iBreviary-style) ─────────────────────── */
+.rv-overlay { position: fixed; inset: 0; z-index: 60; overflow-y: auto; background: var(--paper); color: var(--ink); font-family: 'EB Garamond', Georgia, serif;
+  background-image: radial-gradient(140% 60% at 50% 0, var(--haze), transparent 55%); }
+.rv { max-width: 440px; margin: 0 auto; min-height: 100vh; }
+.rv-bar { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.rv-back, .rv-remote { display: flex; align-items: center; gap: 4px; background: none; border: none; font-family: system-ui, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--bandHi); }
+.rv-remote { border: 1px solid var(--goldA); border-radius: 999px; padding: 4px 12px; color: var(--gold); }
+.rv-doc { padding: 18px 22px 60px; }
+.rv-title { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 30px; line-height: 1.02; color: var(--bandHi); margin: 0 0 2px; }
+.rv-day { text-align: left; color: var(--rubric); font-style: italic; font-size: 14px; margin: 0 0 12px; }
+.rv-section { margin: 18px 0; }
+.rv-head { font-family: system-ui, sans-serif; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--rubric); font-weight: 700; text-align: center; margin: 22px 0 10px; }
+.rv-line { font-size: 17px; line-height: 1.5; margin: 0 0 2px; }
+.rv-gap { height: 10px; }
+.rv-rubric { color: var(--rubric); }
+.rv-ant { font-style: italic; color: var(--muted); }
+.rv-resp { color: var(--rubric); font-weight: 700; }
+.rv-loading { text-align: center; color: var(--muted); padding: 30px; font-size: 22px; }
+
+/* ─────────────────────── Remote mode (two-zone controller) ─────────────────────── */
+.remote-overlay { position: fixed; inset: 0; z-index: 70; display: flex; background: var(--paper); color: var(--ink); font-family: system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+.remote-half { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer; transition: background .12s; }
+.remote-left { border-right: 1px solid var(--line); }
+.remote-half.remote-tap { background: var(--goldA2); }
+.remote-arrow { font-size: 72px; line-height: 1; color: var(--gold); }
+.remote-word { font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.remote-center { flex: 0 0 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 8px; text-align: center; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.remote-hour { font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--ink); line-height: 1.2; }
+.remote-prog { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.remote-done { background: none; border: 1px solid var(--goldA); border-radius: 999px; padding: 6px 14px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--gold); cursor: pointer; }

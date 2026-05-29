@@ -4,6 +4,8 @@ import { createLiturgyController } from './liturgy-controller'
 import { withTimeout } from './shared/async'
 import { loadSettings, saveSettings, setBreviaryId } from './settings'
 import { showBreviaryPicker } from './breviary-picker'
+import { showReadingView } from './reading-view'
+import { showRemote } from './remote-view'
 import { getBreviary, localeFor, DEFAULT_BREVIARY_ID, type BreviarySource, type Locale } from './breviaries'
 import { prefetchWeek, nextNDates, type PrefetchProgress } from './api-client'
 import { clearCache, cacheStats } from './cache'
@@ -21,7 +23,7 @@ type Strings = {
   rows: { breviary: string; scroll: string; tap: string; sec: string; visible: string; silence: string; silenceSec: string }
   modes: Record<ScrollMode, string>
   onWord: string; offWord: string
-  ui: { prev: string; next: string; stop: string; fol: string; of: string; reading: string; play: string; pause: string }
+  ui: { prev: string; next: string; stop: string; fol: string; of: string; reading: string; play: string; pause: string; back: string; remote: string; done: string }
 }
 
 const STRINGS: Record<Locale, Strings> = {
@@ -33,7 +35,7 @@ const STRINGS: Record<Locale, Strings> = {
     rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible hours', silence: 'Silence pauses', silenceSec: 'Silence (sec)' },
     modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
     onWord: 'enabled', offWord: 'disabled',
-    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause' },
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause', back: 'Hours', remote: 'Remote', done: 'Done' },
   },
   it: {
     title: 'Liturgia delle Ore',
@@ -43,7 +45,7 @@ const STRINGS: Record<Locale, Strings> = {
     rows: { breviary: 'Breviario', scroll: 'Scorrimento', tap: 'Tocca per avanzare', sec: 'Secondi per pagina', visible: 'Ore visibili', silence: 'Pause di silenzio', silenceSec: 'Silenzio (sec)' },
     modes: { manual: 'Manuale', auto: 'Auto', 'head-gesture': 'Gesti della testa' },
     onWord: 'attivo', offWord: 'disattivo',
-    ui: { prev: 'indietro', next: 'avanti', stop: 'ferma', fol: 'fol.', of: 'di', reading: 'Lettura', play: 'riprendi', pause: 'pausa' },
+    ui: { prev: 'indietro', next: 'avanti', stop: 'ferma', fol: 'fol.', of: 'di', reading: 'Lettura', play: 'riprendi', pause: 'pausa', back: 'Ore', remote: 'Telecomando', done: 'Fatto' },
   },
   ord: {
     title: 'The Daily Office',
@@ -53,7 +55,7 @@ const STRINGS: Record<Locale, Strings> = {
     rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible offices', silence: 'Silent pauses', silenceSec: 'Silence (sec)' },
     modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
     onWord: 'enabled', offWord: 'disabled',
-    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause' },
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading', play: 'play', pause: 'pause', back: 'Offices', remote: 'Remote', done: 'Done' },
   },
 }
 
@@ -367,7 +369,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
       panel.innerHTML = `<div class="bh">${esc(hour)}</div>
         <div class="bt">${esc(p.section || '—')}</div>
         <div class="bs">${esc(p.sub || '')}${p.sub ? ' — ' : ''}${fol} / ${total}</div>
-        <div class="bctrl">${isAuto ? `<button class="bbtn" data-act="playpause">${esc(ppLabel)}</button>` : ''}<button class="bbtn" data-act="prev">${esc(L.ui.prev)}</button><button class="bbtn" data-act="next">${esc(L.ui.next)}</button><button class="bbtn x" data-act="stop">${esc(L.ui.stop)}</button></div>`
+        <div class="bctrl">${isAuto ? `<button class="bbtn" data-act="playpause">${esc(ppLabel)}</button>` : ''}<button class="bbtn" data-act="prev">${esc(L.ui.prev)}</button><button class="bbtn" data-act="next">${esc(L.ui.next)}</button><button class="bbtn" data-act="remote">${esc(L.ui.remote)}</button><button class="bbtn x" data-act="stop">${esc(L.ui.stop)}</button></div>`
       return
     }
     const pct = total > 1 ? Math.round((fol / total) * 100) : 100
@@ -383,7 +385,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
       </div>
       ${couplet}
       <div class="ilp-prog"><span class="lbl">${esc(L.ui.fol)} ${fol}</span><div class="bar"><div class="fill" style="width:${pct}%"></div></div><span class="lbl">${esc(L.ui.of)} ${total}</span></div>
-      <div class="ilp-ctrls">${isAuto ? `<span data-act="playpause">${esc(ppLabel)}</span>` : ''}<span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
+      <div class="ilp-ctrls">${isAuto ? `<span data-act="playpause">${esc(ppLabel)}</span>` : ''}<span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span data-act="remote">${esc(L.ui.remote)}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
   }
 
   function updateDay() {
@@ -426,15 +428,32 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   updateVisibleVal()
 
   // ── events ──
+  function openRemote() {
+    showRemote(controller as any, {
+      hourName: activeHourName,
+      ui: { prev: L.ui.prev, next: L.ui.next, done: L.ui.done, fol: L.ui.fol, of: L.ui.of },
+    })
+  }
+
   hourList.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-slug]')
     if (!btn) return
     const slug = btn.dataset.slug!
+    const hourObj = currentHours.find((h) => h.slug === slug)
     activeSlug = slug
-    activeHourName = currentHours.find((h) => h.slug === slug)?.name ?? slug
+    activeHourName = hourObj?.name ?? slug
     visited.add(slug)
     renderHourButtons(currentHours)
+    // Load on the glasses (if connected) and open the full text on the phone.
     void controller.selectHour(slug).then(() => { renderHourButtons(currentHours); refreshPanel(); updateDay() })
+    showReadingView({
+      slug,
+      name: activeHourName,
+      date: hourObj?.date,
+      day: (controller.getState() as any).day,
+      ui: { back: L.ui.back, remote: L.ui.remote },
+      onRemote: openRemote,
+    })
   })
 
   panel.addEventListener('click', (e) => {
@@ -447,6 +466,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
       if (paused) controller.resumeAuto(); else controller.pauseAuto()
       refreshPanel()
     }
+    else if (act === 'remote') openRemote()
   })
 
   $('brev-row')?.addEventListener('click', async () => {
