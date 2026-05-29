@@ -234,7 +234,7 @@ function advancedBlock(): string {
     <div class="ilp-setrow"><span class="k">Season</span><span class="v">${esc(detected)}${override} · ${esc(today)}</span></div>
     <div class="ilp-prefetch" id="prefetch" hidden><span id="prefetch-label"></span><div class="bar"><div class="fill" id="prefetch-fill"></div></div></div>
     <div class="ilp-setrow"><span class="k">Date</span><span class="v"><input id="date-input" type="date" value="${todayInputValue()}"></span></div>
-    <div class="ilp-setrow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span><span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
+    <div class="ilp-setrow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span><span id="copy-log" style="cursor:pointer;text-decoration:underline">copy log</span><span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
     <pre class="ilp-log" id="event-log"></pre>
   </div>`
 }
@@ -285,7 +285,7 @@ function lentMarkup(breviary: BreviarySource, L: Strings): string {
     <div id="adv-body" hidden style="padding:0 4px">
       <div class="ilp-prefetch" id="prefetch" hidden><span id="prefetch-label"></span><div class="bar"><div class="fill" id="prefetch-fill"></div></div></div>
       <div class="lent-srow"><span class="k">Date</span><span class="v"><input id="date-input" type="date" value="${todayInputValue()}" style="background:none;border:1px solid var(--lhair);color:inherit;font:inherit"></span></div>
-      <div class="lent-srow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span> <span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
+      <div class="lent-srow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span> <span id="copy-log" style="cursor:pointer;text-decoration:underline">copy log</span> <span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
       <pre class="ilp-log" id="event-log" style="margin:10px 20px 0"></pre>
     </div>
     <div class="lent-note"><b>Q:</b> Where did my CSS / formatting go?<br><b>A:</b> It's Lent. We gave that up. It'll be back on Easter.</div>
@@ -506,6 +506,22 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   })
   $('adv-toggle')?.addEventListener('click', () => { const b = $('adv-body'); if (b) b.hidden = !b.hidden })
   $('clear-log')?.addEventListener('click', () => { if (logEl) logEl.textContent = '' })
+  $('copy-log')?.addEventListener('click', async () => {
+    const text = logEl?.textContent ?? ''
+    let ok = false
+    try { await navigator.clipboard.writeText(text); ok = true } catch { /* fall back */ }
+    if (!ok) {
+      // Fallback for webviews without async clipboard: temporary textarea + execCommand.
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.focus(); ta.select()
+        ok = document.execCommand('copy')
+        ta.remove()
+      } catch { /* ignore */ }
+    }
+    const el = $('copy-log'); if (el) { const prev = el.textContent; el.textContent = ok ? 'copied!' : 'copy failed'; setTimeout(() => { if (el) el.textContent = prev }, 1500) }
+  })
   $('date-input')?.addEventListener('change', (e) => {
     void controller.loadHours(dateInputToApi((e.target as HTMLInputElement).value))
   })
