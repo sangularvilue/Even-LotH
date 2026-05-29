@@ -1,6 +1,8 @@
 import './styles.css'
+import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk'
 import { createLiturgyController } from './liturgy-controller'
-import { loadSettings, saveSettings } from './settings'
+import { withTimeout } from './shared/async'
+import { loadSettings, saveSettings, setBreviaryId } from './settings'
 import { showBreviaryPicker } from './breviary-picker'
 import { getBreviary, localeFor, DEFAULT_BREVIARY_ID, type BreviarySource, type Locale } from './breviaries'
 import { prefetchWeek, nextNDates, type PrefetchProgress } from './api-client'
@@ -113,18 +115,35 @@ function resolveDark(): boolean {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
+const HOST_BREV_KEY = 'lit.breviaryId'
+
+// Recover the chosen breviary from host-backed storage (the packaged webview's
+// own localStorage can reset between launches). Validated against the registry.
+async function readHostBreviary(): Promise<string | null> {
+  try {
+    const bridge = await withTimeout(waitForEvenAppBridge(), 2000)
+    const v = await bridge.getLocalStorage(HOST_BREV_KEY)
+    return v && getBreviary(v).id === v ? v : null
+  } catch { return null }
+}
+
 async function bootstrap() {
   // Set theme/season on <html> up-front so the first-launch picker is themed too.
   const { season } = resolveSeason()
   document.documentElement.dataset.theme = resolveDark() ? 'dark' : 'light'
   document.documentElement.dataset.season = season
 
-  const settings = loadSettings()
-  // Render immediately with the chosen breviary (or the default) so a session
-  // launched directly from the glasses never hangs waiting for a phone tap.
+  let settings = loadSettings()
+  // Fast path: localStorage kept the choice → render at once. Otherwise show a
+  // brief splash and recover the choice from host storage before rendering, so
+  // a glasses launch opens YOUR breviary instead of defaulting to English.
+  if (settings.breviaryId == null) {
+    app!.innerHTML = `<div class="ilp" style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div class="ilp-hero-title" style="opacity:.65;font-size:22px">${esc(STRINGS.en.title)}</div></div>`
+    const hostId = await readHostBreviary()
+    if (hostId) { setBreviaryId(hostId); settings = loadSettings() }
+  }
   renderApp(getBreviary(settings.breviaryId ?? DEFAULT_BREVIARY_ID))
-  // True first run (no choice yet): offer the picker non-blockingly; the app is
-  // already live with the default in the meantime. Reload to apply a pick.
+  // True first run (no local + no host choice): offer the picker non-blockingly.
   if (settings.breviaryId == null) {
     void showBreviaryPicker().then((id) => { if (id) location.reload() })
   }
@@ -492,6 +511,9 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
 
   async function startup() {
     await Promise.all([controller.loadHours(), controller.connect()])
+    // Mirror the active breviary to host-backed storage so it's restored on the
+    // next launch (the webview's own localStorage can reset between launches).
+    void controller.setHostStorage(HOST_BREV_KEY, breviary.id)
     await controller.renderHourList().catch((err) => appendLog(`Render error: ${err}`))
     void runPrefetch()
   }

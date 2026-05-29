@@ -49,6 +49,7 @@ const BAR_HEIGHT = 30
 // Conservative page sizing — 7 lines of ~50 chars fits safely
 const CHARS_PER_LINE = 50
 const LINES_PER_PAGE = 7
+const AUTO_MIN_DWELL = 3 // seconds — floor so 1-line pages don't linger
 
 function todayDateStr(): string {
   const d = new Date()
@@ -890,7 +891,11 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     const boundary = state.sectionLabels[i] !== state.sectionLabels[i + 1]
     const finished = classifySection(state.sectionLabels[i] || '')
     const silence = s.silenceEnabled && boundary && finished !== 'other'
-    const delayMs = Math.max(1, (silence ? s.silenceSeconds : s.autoScrollSeconds)) * 1000
+    // Scale the normal page dwell by how much text is on the page, so short
+    // (often 1-line, formatting-only) pages don't linger the full interval.
+    const lineCount = (state.pages[i] || '').split('\n').filter((l) => l.trim().length > 0).length || 1
+    const dwell = Math.max(AUTO_MIN_DWELL, s.autoScrollSeconds * Math.min(1, lineCount / LINES_PER_PAGE))
+    const delayMs = Math.max(1, silence ? s.silenceSeconds : dwell) * 1000
     autoTimerId = window.setTimeout(async () => {
       autoTimerId = null
       if (state.view !== 'reading' || state.autoPaused) return
@@ -912,6 +917,17 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     if (loadSettings().scrollMode !== 'auto' || state.view !== 'reading') return
     state.autoPaused = false
     scheduleAuto()
+  }
+
+  // Host-backed persistent storage (survives cold launches; the packaged
+  // webview's own localStorage does not). No-ops without a bridge.
+  async function getHostStorage(key: string): Promise<string | null> {
+    if (!state.bridge) return null
+    try { return await state.bridge.getLocalStorage(key) } catch { return null }
+  }
+  async function setHostStorage(key: string, value: string): Promise<void> {
+    if (!state.bridge) return
+    try { await state.bridge.setLocalStorage(key, value) } catch { /* ignore */ }
   }
 
   // Companion-driven page navigation (mirrors the glasses SCROLL events) so the
@@ -967,6 +983,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     scrollDown,
     pauseAuto,
     resumeAuto,
+    getHostStorage,
+    setHostStorage,
     stopReading,
     renderHourList,
     getState: () => ({ ...state }),
