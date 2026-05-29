@@ -44,8 +44,10 @@ function tune() {
 
 // Pull accel (+ optional gyro) out of whatever shape the host sends.
 function extract(event: any): { ax: number; ay: number; az: number; gx?: number; gy?: number; gz?: number } | null {
-  const d = event?.imuEvent ?? event?.imu ?? event?.sensorEvent ?? event?.motionEvent
-    ?? event?.motion ?? event?.sensor ?? event?.accelerometer ?? null
+  // SDK 0.0.10 reports IMU as event.imuData = { x, y, z } (accelerometer, no
+  // gyro). Other shapes kept as fallbacks for safety.
+  const d = event?.imuData ?? event?.imuEvent ?? event?.imu ?? event?.sensorEvent
+    ?? event?.motionEvent ?? event?.motion ?? event?.sensor ?? event?.accelerometer ?? null
   if (!d) return null
   const num = (...keys: string[]) => { for (const k of keys) if (typeof d[k] === 'number') return d[k]; return undefined }
   const ax = num('x', 'ax', 'accX', 'accelX', 'acc_x')
