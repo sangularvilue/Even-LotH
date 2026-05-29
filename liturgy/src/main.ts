@@ -213,6 +213,7 @@ function settingsBlock(breviary: BreviarySource, L: Strings): string {
         <option value="auto"${s.scrollMode === 'auto' ? ' selected' : ''}>${esc(L.modes.auto)}</option>
         <option value="head-gesture"${s.scrollMode === 'head-gesture' ? ' selected' : ''}>${esc(L.modes['head-gesture'])}</option>
       </select></span></div>
+    <div class="ilp-setrow" id="tilt-row"${s.scrollMode === 'head-gesture' ? '' : ' hidden'}><span class="k">Tilt dead zone (°)</span><span class="v"><input id="set-tilt" type="number" min="3" max="60" step="1" value="${s.headTiltDeg}" style="width:48px"></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.tap)}</span><span class="v">
       <select id="set-tap"><option value="1"${s.tapToAdvance ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.tapToAdvance ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.sec)}</span><span class="v"><input id="set-seconds" type="number" min="2" max="60" step="1" value="${s.autoScrollSeconds}" style="width:48px"></span></div>
@@ -477,6 +478,11 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   $('set-scroll')?.addEventListener('change', (e) => {
     const s = loadSettings(); s.scrollMode = (e.target as HTMLSelectElement).value as ScrollMode; saveSettings(s)
     appendLog(`Scroll mode: ${s.scrollMode}`)
+    const tr = $('tilt-row'); if (tr) tr.hidden = s.scrollMode !== 'head-gesture'
+  })
+  $('set-tilt')?.addEventListener('change', (e) => {
+    const val = Number((e.target as HTMLInputElement).value)
+    if (val >= 3 && val <= 60) { const s = loadSettings(); s.headTiltDeg = val; saveSettings(s); appendLog(`Tilt dead zone: ${val}°`) }
   })
   $('set-tap')?.addEventListener('change', (e) => {
     const s = loadSettings(); s.tapToAdvance = (e.target as HTMLSelectElement).value === '1'; saveSettings(s)

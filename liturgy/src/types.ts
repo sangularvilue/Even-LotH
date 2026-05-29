@@ -53,6 +53,7 @@ export type LiturgySettings = {
   autoScrollSeconds: number
   silenceEnabled: boolean    // extra contemplative pause after psalms/canticles/reading
   silenceSeconds: number
+  headTiltDeg: number        // head-tilt dead zone (degrees) before paging kicks in
   tapToAdvance: boolean
   hiddenHours: string[]
   fontSize: number
