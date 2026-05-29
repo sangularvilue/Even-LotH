@@ -371,6 +371,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
           break
         case 'double_tap':
           if (state.view === 'reading') void onReadingEvent(OsEventTypeList.DOUBLE_CLICK_EVENT)
+          else if (state.view === 'hours') void onHourListEvent(OsEventTypeList.DOUBLE_CLICK_EVENT, state.selectedHourIndex)
           break
       }
     }, log)
@@ -643,6 +644,16 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   async function onHourListEvent(eventType: number | undefined, incomingIndex: number): Promise<void> {
+    // Double-tap on the top-level hour list exits the app (fires the system
+    // exit-confirmation dialog). This is the user's way out of the plugin.
+    if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+      log('Exit requested')
+      if (state.bridge) {
+        try { await state.bridge.shutDownPageContainer(1) } catch (err) { log(`shutDown failed: ${err}`) }
+      }
+      return
+    }
+
     const hours = visibleHours()
     if (hours.length === 0) return
 
