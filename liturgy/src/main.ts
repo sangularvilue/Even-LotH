@@ -1,110 +1,130 @@
 import './styles.css'
 import { createLiturgyController } from './liturgy-controller'
-import { loadSettings, saveSettings, getLanguage, setLanguage } from './settings'
-import { showLanguagePicker } from './language-picker'
+import { loadSettings, saveSettings } from './settings'
+import { showBreviaryPicker } from './breviary-picker'
+import { getBreviary, localeFor, type BreviarySource, type Locale } from './breviaries'
 import { prefetchWeek, nextNDates, type PrefetchProgress } from './api-client'
 import { clearCache, cacheStats } from './cache'
-import type { LiturgyPhase, HourInfo, ScrollMode, Language } from './types'
+import { getLiturgicalSeason, SEASON_STYLE, type SeasonId } from './liturgical-season'
+import { icon, fleuron, adventCandles, christmasWreath, easterTomb, pentecostDove } from './illum-heroes'
+import type { LiturgyPhase, HourInfo, ScrollMode } from './types'
 
-// ── Hour toggle lists per language ──
+// ── Localized chrome. Hour names + reading text come from real data; this is
+//    the surrounding UI copy + season display names, keyed by breviary locale. ──
+type Strings = {
+  title: string
+  s: Record<SeasonId, string>
+  nowGlasses: string; hoursHead: string; settingsHead: string; advanced: string
+  alleluia: string; comeSpirit: string; noel: string
+  rows: { breviary: string; scroll: string; tap: string; sec: string; visible: string }
+  modes: Record<ScrollMode, string>
+  onWord: string; offWord: string
+  ui: { prev: string; next: string; stop: string; fol: string; of: string; reading: string }
+}
 
-type HourToggle = { key: string; label: string }
-
-const HOUR_TOGGLES_EN: HourToggle[] = [
-  { key: 'invitatory', label: 'Invitatory' },
-  { key: 'office-of-readings', label: 'Office of Readings' },
-  { key: 'morning-prayer', label: 'Morning Prayer' },
-  { key: 'midmorning-prayer', label: 'Midmorning Prayer' },
-  { key: 'midday-prayer', label: 'Midday Prayer' },
-  { key: 'midafternoon-prayer', label: 'Midafternoon Prayer' },
-  { key: 'evening-prayer', label: 'Evening Prayer' },
-  { key: 'night-prayer', label: 'Night Prayer' },
-  { key: 'yesterday\'s-evening-prayer', label: 'Yesterday\'s Evening Prayer' },
-  { key: 'yesterday\'s-night-prayer', label: 'Yesterday\'s Night Prayer' },
-]
-
-const HOUR_TOGGLES_IT: HourToggle[] = [
-  { key: 'invitatorio', label: 'Invitatorio' },
-  { key: 'ufficio-delle-letture', label: 'Ufficio delle letture' },
-  { key: 'lodi', label: 'Lodi' },
-  { key: 'ora-media-—-terza', label: 'Ora Media — Terza' },
-  { key: 'ora-media-—-sesta', label: 'Ora Media — Sesta' },
-  { key: 'ora-media-—-nona', label: 'Ora Media — Nona' },
-  { key: 'vespri', label: 'Vespri' },
-  { key: 'compieta', label: 'Compieta' },
-  { key: 'vespri-di-ieri', label: 'Vespri di ieri' },
-  { key: 'compieta-di-ieri', label: 'Compieta di ieri' },
-]
-
-const STRINGS = {
+const STRINGS: Record<Locale, Strings> = {
   en: {
     title: 'Liturgy of the Hours',
-    subtitle: 'Divine Office prayer reader for glasses',
-    connectGlasses: 'Connect glasses',
-    dateHours: 'Date & Hours',
-    load: 'Load',
-    reading: 'Reading',
-    prev: 'Prev',
-    next: 'Next',
-    stop: 'Stop',
-    settings: 'Settings',
-    scrollMode: 'Scroll mode',
-    manual: 'Manual',
-    autoScroll: 'Auto-scroll',
-    headGesture: 'Head gestures',
-    tapToAdvance: 'Tap to advance',
-    enabled: 'Enabled',
-    secondsPerPage: 'Seconds per page',
-    visibleHours: 'Visible hours',
-    controls: 'Glasses Controls',
-    controlsHint: 'Hour list: Scroll to navigate, Tap to select. Reading: Tap to advance page (if enabled), Scroll up/down to change page, Double-tap to go back.',
-    eventLog: 'Event Log',
-    clear: 'Clear',
-    refreshAll: 'Refresh all',
-    cache: 'Cache',
-    ready: 'Ready',
+    s: { advent: 'Advent', christmas: 'Christmastide', ordinary: 'Ordinary Time', lent: 'Lent', easter: 'Eastertide', pentecost: 'Pentecost' },
+    nowGlasses: 'Now on the glasses', hoursHead: 'The Hours of the Day', settingsHead: 'Settings', advanced: 'Advanced · event log & cache',
+    alleluia: 'Alleluia', comeSpirit: 'Come, Holy Spirit', noel: 'Venite adoremus',
+    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible hours' },
+    modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
+    onWord: 'enabled', offWord: 'disabled',
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading' },
   },
   it: {
     title: 'Liturgia delle Ore',
-    subtitle: 'Ufficio divino per gli occhiali',
-    connectGlasses: 'Connetti occhiali',
-    dateHours: 'Data e Ore',
-    load: 'Carica',
-    reading: 'Lettura',
-    prev: 'Indietro',
-    next: 'Avanti',
-    stop: 'Ferma',
-    settings: 'Impostazioni',
-    scrollMode: 'Scorrimento',
-    manual: 'Manuale',
-    autoScroll: 'Auto',
-    headGesture: 'Gesti della testa',
-    tapToAdvance: 'Tocca per avanzare',
-    enabled: 'Attivo',
-    secondsPerPage: 'Secondi per pagina',
-    visibleHours: 'Ore visibili',
-    controls: 'Controlli occhiali',
-    controlsHint: 'Elenco ore: scorri per navigare, tocca per selezionare. Lettura: tocca per avanzare (se attivo), scorri per cambiare pagina, doppio-tocco per tornare.',
-    eventLog: 'Registro eventi',
-    clear: 'Pulisci',
-    refreshAll: 'Aggiorna tutto',
-    cache: 'Cache',
-    ready: 'Pronto',
+    s: { advent: 'Avvento', christmas: 'Tempo di Natale', ordinary: 'Tempo Ordinario', lent: 'Quaresima', easter: 'Tempo di Pasqua', pentecost: 'Pentecoste' },
+    nowGlasses: 'Ora sugli occhiali', hoursHead: 'Le Ore del giorno', settingsHead: 'Impostazioni', advanced: 'Avanzate · registro & cache',
+    alleluia: 'Alleluia', comeSpirit: 'Vieni, Spirito Santo', noel: 'Venite adoriamo',
+    rows: { breviary: 'Breviario', scroll: 'Scorrimento', tap: 'Tocca per avanzare', sec: 'Secondi per pagina', visible: 'Ore visibili' },
+    modes: { manual: 'Manuale', auto: 'Auto', 'head-gesture': 'Gesti della testa' },
+    onWord: 'attivo', offWord: 'disattivo',
+    ui: { prev: 'indietro', next: 'avanti', stop: 'ferma', fol: 'fol.', of: 'di', reading: 'Lettura' },
   },
-} as const
+  ord: {
+    title: 'The Daily Office',
+    s: { advent: 'Advent', christmas: 'Christmastide', ordinary: 'Time after Trinity', lent: 'Lent', easter: 'Eastertide', pentecost: 'Whitsun' },
+    nowGlasses: 'Now on the glasses', hoursHead: 'The Offices of the Day', settingsHead: 'Settings', advanced: 'Advanced · event log & cache',
+    alleluia: 'Alleluia', comeSpirit: 'Come, Holy Ghost', noel: 'O come, let us adore him',
+    rows: { breviary: 'Breviary', scroll: 'Scroll mode', tap: 'Tap to advance', sec: 'Seconds per page', visible: 'Visible offices' },
+    modes: { manual: 'Manual', auto: 'Auto-scroll', 'head-gesture': 'Head gestures' },
+    onWord: 'enabled', offWord: 'disabled',
+    ui: { prev: 'prev', next: 'next', stop: 'stop', fol: 'fol.', of: 'of', reading: 'Reading' },
+  },
+}
 
-// ── Bootstrap ──
+// ── helpers ──
+const ROMAN_HOURS = ['j', 'ij', 'iij', 'iv', 'v', 'vj', 'vij', 'viij']
+function roman(n: number): string {
+  const map: [number, string][] = [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']]
+  let s = ''
+  for (const [v, sym] of map) { while (n >= v) { s += sym; n -= v } }
+  return s.replace(/i$/, 'j') // manuscript final j
+}
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+function versal(title: string): string {
+  return (title.replace(/^(the|il|la|lo|le|gli)\s+/i, '')[0] || 'L').toUpperCase()
+}
+
+// Parse a glasses-formatted page (== HEAD ==, R/, (sub), [rubric]) into the
+// panel's fields. Best-effort; degrades to plain first lines.
+function parsePage(page: string): { section: string; sub: string; v: string; r: string } {
+  const lines = page.split('\n').map((l) => l.trim()).filter(Boolean)
+  let section = '', sub = '', v = '', r = ''
+  const content: string[] = []
+  for (const l of lines) {
+    const h = l.match(/^==\s*(.+?)\s*==$/)
+    if (h) { if (!section) section = h[1]; continue }
+    const it = l.match(/^\((.+)\)$/)
+    if (it) { if (!sub) sub = it[1]; continue }
+    if (/^\[.*\]$/.test(l)) continue // rubric
+    const resp = l.match(/^R\/\s*(.*)$/)
+    if (resp) { if (!r) { r = resp[1] || ''; } continue }
+    content.push(l)
+  }
+  if (!section) section = content.shift() || ''
+  if (!v) v = content.shift() || ''
+  return { section, sub, v, r }
+}
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('Missing #app')
 
+// Dev-only overrides (so all seasons/themes can be previewed despite the fixed
+// real date): ?season=advent|christmas|ordinary|lent|easter|pentecost & ?theme=dark|light
+const params = new URLSearchParams(location.search)
+const seasonOverride = params.get('season') as SeasonId | null
+const themeOverride = params.get('theme')
+
+function resolveSeason(): { season: SeasonId; adventWeek: number } {
+  const valid: SeasonId[] = ['advent', 'christmas', 'ordinary', 'lent', 'easter', 'pentecost']
+  if (seasonOverride && valid.includes(seasonOverride)) {
+    return { season: seasonOverride, adventWeek: Number(params.get('week')) || 2 }
+  }
+  return getLiturgicalSeason(new Date())
+}
+function resolveDark(): boolean {
+  if (themeOverride === 'dark') return true
+  if (themeOverride === 'light') return false
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
 async function bootstrap() {
+  // Set theme/season on <html> up-front so the first-launch picker is themed too.
+  const { season } = resolveSeason()
+  document.documentElement.dataset.theme = resolveDark() ? 'dark' : 'light'
+  document.documentElement.dataset.season = season
+
   let settings = loadSettings()
-  if (settings.language == null) {
-    await showLanguagePicker()
+  if (settings.breviaryId == null) {
+    await showBreviaryPicker()
     settings = loadSettings()
   }
-  renderApp(settings.language!)
+  renderApp(getBreviary(settings.breviaryId))
 }
 void bootstrap()
 
@@ -112,338 +132,337 @@ function todayInputValue(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+function dateInputToApi(val: string): string { return val.replace(/-/g, '') }
 
-function dateInputToApi(val: string): string {
-  return val.replace(/-/g, '')
+function renderApp(breviary: BreviarySource) {
+  const { season, adventWeek } = resolveSeason()
+  const dark = resolveDark()
+  const style = SEASON_STYLE[season]
+  const L = STRINGS[localeFor(breviary.id)]
+
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  document.documentElement.dataset.season = season
+
+  const now = new Date()
+  const langTag = localeFor(breviary.id) === 'it' ? 'it' : 'en'
+  const weekday = new Intl.DateTimeFormat(langTag, { weekday: 'long' }).format(now)
+  const dateStr = new Intl.DateTimeFormat(langTag, { day: 'numeric', month: 'short' }).format(now)
+
+  if (style.austere) app!.innerHTML = lentMarkup(breviary, L)
+  else app!.innerHTML = illuminatedMarkup(breviary, L, season, adventWeek, dark, weekday, dateStr)
+
+  wireUpApp(breviary, L, !!style.austere)
 }
 
-// Render the main app UI after language has been chosen.
-function renderApp(lang: Language) {
-  const t = STRINGS[lang]
-  const toggles = lang === 'it' ? HOUR_TOGGLES_IT : HOUR_TOGGLES_EN
-  const settings = loadSettings()
-
-  app!.innerHTML = `
-    <header class="hero card">
-      <div>
-        <p class="eyebrow">Even G2 <span id="lang-badge" class="lang-badge" title="Change language">${lang.toUpperCase()}</span></p>
-        <h1 class="page-title">${t.title}</h1>
-        <p class="page-subtitle">${t.subtitle}</p>
-      </div>
-      <div id="hero-pill" class="hero-pill is-ready" aria-live="polite">${t.ready}</div>
-    </header>
-
-    <section class="card">
-      <div class="top-actions">
-        <button id="connect-btn" class="btn btn-primary connect-glasses-btn" type="button">${t.connectGlasses}</button>
-      </div>
-    </section>
-
-    <section id="prefetch-card" class="card" hidden>
-      <div id="prefetch-banner" class="prefetch-banner">
-        <span class="prefetch-label" id="prefetch-label">Loading week…</span>
-        <div class="prefetch-bar"><div class="prefetch-bar-fill" id="prefetch-fill" style="width:0%"></div></div>
-      </div>
-    </section>
-
-    <section class="card">
-      <p class="section-label">${t.dateHours}</p>
-      <div class="date-row">
-        <input id="date-input" class="date-input" type="date" value="${todayInputValue()}" />
-        <button id="load-btn" class="btn btn-primary compact" type="button">
-          <span class="btn-title">${t.load}</span>
-        </button>
-      </div>
-      <div id="hour-grid" class="hour-grid"></div>
-    </section>
-
-    <section id="reading-card" class="reading-card card">
-      <p class="section-label">${t.reading}</p>
-      <div class="reading-header">
-        <span id="reading-section" class="reading-section-label"></span>
-        <span id="reading-progress" class="reading-progress"></span>
-      </div>
-      <div id="reading-text" class="reading-text"></div>
-      <div class="reading-nav">
-        <button id="prev-btn" class="btn" type="button"><span class="btn-title">${t.prev}</span></button>
-        <button id="next-btn" class="btn" type="button"><span class="btn-title">${t.next}</span></button>
-        <button id="stop-reading-btn" class="btn btn-ghost" type="button"><span class="btn-title">${t.stop}</span></button>
-      </div>
-    </section>
-
-    <section class="card">
-      <p class="section-label">${t.settings}</p>
-      <div class="settings-grid">
-        <div class="setting-row">
-          <span class="setting-label">${t.scrollMode}</span>
-          <select id="scroll-mode-select" class="setting-select">
-            <option value="manual" ${settings.scrollMode === 'manual' ? 'selected' : ''}>${t.manual}</option>
-            <option value="auto" ${settings.scrollMode === 'auto' ? 'selected' : ''}>${t.autoScroll}</option>
-            <option value="head-gesture" ${settings.scrollMode === 'head-gesture' ? 'selected' : ''}>${t.headGesture}</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">${t.tapToAdvance}</span>
-          <label class="hour-toggle"><input id="tap-advance-check" type="checkbox" ${settings.tapToAdvance ? 'checked' : ''} /> ${t.enabled}</label>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">${t.secondsPerPage}</span>
-          <input id="scroll-speed-input" class="setting-input" type="number" min="2" max="60" step="1" value="${settings.autoScrollSeconds}" style="width:70px" />
-        </div>
-        <div>
-          <span class="setting-label">${t.visibleHours}</span>
-          <div id="hour-toggles" class="hour-toggle-grid">
-            ${toggles.map(h => `
-              <label class="hour-toggle">
-                <input type="checkbox" data-hour-key="${h.key}" ${settings.hiddenHours.includes(h.key) ? '' : 'checked'} />
-                ${h.label}
-              </label>
-            `).join('')}
-          </div>
-        </div>
-        <div class="setting-row">
-          <span class="setting-label">${t.cache}</span>
-          <button id="refresh-all-btn" class="btn btn-ghost compact" type="button">
-            <span class="btn-title">${t.refreshAll}</span>
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <p class="section-label">${t.controls}</p>
-      <p class="hint">${t.controlsHint}</p>
-    </section>
-
-    <section class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <p class="log-title" style="margin:0">${t.eventLog}</p>
-        <button id="clear-log-btn" class="btn btn-ghost compact" type="button" style="padding:4px 10px;font-size:0.72rem">
-          <span class="btn-title">${t.clear}</span>
-        </button>
-      </div>
-      <pre id="event-log" aria-live="polite"></pre>
-    </section>
-  `
-
-  wireUpApp(lang, t)
+// ── Illuminated layout markup ──
+function seasonHeader(breviary: BreviarySource, L: Strings, season: SeasonId, adventWeek: number, dark: boolean, weekday: string, dateStr: string): string {
+  const style = SEASON_STYLE[season]
+  const rubric = `<div class="ilp-rubric-line"><span class="v">℣.</span> ${esc(weekday)}, ${esc(dateStr)} — ${esc(L.s[season])}</div>`
+  if (style.motif === 'hero') {
+    const hero = season === 'christmas' ? christmasWreath(dark) : season === 'easter' ? easterTomb(dark) : pentecostDove(dark)
+    const tagline = season === 'christmas' ? L.noel : season === 'easter' ? L.alleluia + '!' : L.comeSpirit
+    return `<div class="ilp-hero">${hero}
+        <div class="ilp-hero-title">${esc(L.title)}</div>
+        <div class="ilp-hero-sub">${esc(breviary.badge)} · ${esc(breviary.name)}</div>
+      </div>${rubric}<div class="ilp-tagline">${esc(tagline)}</div>`
+  }
+  const orn = season === 'advent'
+    ? adventCandles(adventWeek, { band: style.band, rose: style.rose || '#c98ab0', gold: dark ? '#cda44f' : '#a9842f' })
+    : fleuron(dark ? '#cda44f' : '#a9842f', 12)
+  return `<div class="ilp-incipit"><div class="ilp-incipit-in">
+      <div class="ilp-versal">${versal(L.title)}</div>
+      <div><h1>${esc(L.title)}</h1><div class="sub">${esc(breviary.badge)} · ${esc(breviary.name)}</div></div>
+    </div></div>${rubric}<div class="ilp-orn">${orn}</div>`
 }
 
-function wireUpApp(lang: Language, t: typeof STRINGS['en']) {
-  const heroPill = document.querySelector<HTMLDivElement>('#hero-pill')!
-  const connectBtn = document.querySelector<HTMLButtonElement>('#connect-btn')!
-  const dateInput = document.querySelector<HTMLInputElement>('#date-input')!
-  const loadBtn = document.querySelector<HTMLButtonElement>('#load-btn')!
-  const hourGrid = document.querySelector<HTMLDivElement>('#hour-grid')!
-  const readingCard = document.querySelector<HTMLElement>('#reading-card')!
-  const readingSectionEl = document.querySelector<HTMLElement>('#reading-section')!
-  const readingProgressEl = document.querySelector<HTMLElement>('#reading-progress')!
-  const readingTextEl = document.querySelector<HTMLElement>('#reading-text')!
-  const prevBtn = document.querySelector<HTMLButtonElement>('#prev-btn')!
-  const nextBtn = document.querySelector<HTMLButtonElement>('#next-btn')!
-  const stopReadingBtn = document.querySelector<HTMLButtonElement>('#stop-reading-btn')!
-  const scrollModeSelect = document.querySelector<HTMLSelectElement>('#scroll-mode-select')!
-  const scrollSpeedInput = document.querySelector<HTMLInputElement>('#scroll-speed-input')!
-  const hourToggles = document.querySelector<HTMLDivElement>('#hour-toggles')!
-  const logEl = document.querySelector<HTMLPreElement>('#event-log')!
-  const clearLogBtn = document.querySelector<HTMLButtonElement>('#clear-log-btn')!
-  const refreshAllBtn = document.querySelector<HTMLButtonElement>('#refresh-all-btn')!
-  const langBadge = document.querySelector<HTMLSpanElement>('#lang-badge')!
-  const prefetchCard = document.querySelector<HTMLElement>('#prefetch-card')!
-  const prefetchLabel = document.querySelector<HTMLElement>('#prefetch-label')!
-  const prefetchFill = document.querySelector<HTMLElement>('#prefetch-fill')!
+function settingsBlock(breviary: BreviarySource, L: Strings): string {
+  const s = loadSettings()
+  return `<div class="ilp-body">
+    <div class="ilp-head">${esc(L.settingsHead)}</div>
+    <div class="ilp-setrow tap" id="brev-row">
+      <span class="k">${esc(L.rows.breviary)}</span>
+      <span class="v"><span class="ilp-brev-badge">${esc(breviary.badge)}</span> ${esc(breviary.name)} ›</span>
+    </div>
+    <div class="ilp-setrow"><span class="k">${esc(L.rows.scroll)}</span><span class="v">
+      <select id="set-scroll">
+        <option value="manual"${s.scrollMode === 'manual' ? ' selected' : ''}>${esc(L.modes.manual)}</option>
+        <option value="auto"${s.scrollMode === 'auto' ? ' selected' : ''}>${esc(L.modes.auto)}</option>
+        <option value="head-gesture"${s.scrollMode === 'head-gesture' ? ' selected' : ''}>${esc(L.modes['head-gesture'])}</option>
+      </select></span></div>
+    <div class="ilp-setrow"><span class="k">${esc(L.rows.tap)}</span><span class="v">
+      <select id="set-tap"><option value="1"${s.tapToAdvance ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.tapToAdvance ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
+    <div class="ilp-setrow"><span class="k">${esc(L.rows.sec)}</span><span class="v"><input id="set-seconds" type="number" min="2" max="60" step="1" value="${s.autoScrollSeconds}" style="width:48px"></span></div>
+    <div class="ilp-setrow tap" id="visible-row" style="border-bottom:none"><span class="k">${esc(L.rows.visible)}</span><span class="v" id="visible-val"></span></div>
+    <div id="hour-toggles" class="ilp-toggle-grid" hidden></div>
+  </div>
+  <div class="ilp-adv" id="adv-toggle">— ${esc(L.advanced)} —</div>
+  ${advancedBlock()}`
+}
+
+function advancedBlock(): string {
+  const detected = document.documentElement.dataset.season || '?'
+  const override = new URLSearchParams(location.search).get('season') ? ' (override)' : ''
+  const today = new Date().toDateString()
+  return `<div class="ilp-advbody" id="adv-body" hidden>
+    <div class="ilp-setrow"><span class="k">Season</span><span class="v">${esc(detected)}${override} · ${esc(today)}</span></div>
+    <div class="ilp-prefetch" id="prefetch" hidden><span id="prefetch-label"></span><div class="bar"><div class="fill" id="prefetch-fill"></div></div></div>
+    <div class="ilp-setrow"><span class="k">Date</span><span class="v"><input id="date-input" type="date" value="${todayInputValue()}"></span></div>
+    <div class="ilp-setrow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span><span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
+    <pre class="ilp-log" id="event-log"></pre>
+  </div>`
+}
+
+function glassesPanelShell(L: Strings): string {
+  return `<div class="ilp-head" style="margin-bottom:8px">${esc(L.nowGlasses)}</div>
+    <div class="ilp-panel is-empty" id="glasses-panel"></div>`
+}
+
+function illuminatedMarkup(breviary: BreviarySource, L: Strings, season: SeasonId, adventWeek: number, dark: boolean, weekday: string, dateStr: string): string {
+  return `<div class="ilp">
+    ${seasonHeader(breviary, L, season, adventWeek, dark, weekday, dateStr)}
+    <div class="ilp-body">
+      <div class="ilp-head">${esc(L.s[season])}</div>
+      <div id="hour-list"></div>
+    </div>
+    ${glassesPanelShell(L)}
+    ${settingsBlock(breviary, L)}
+  </div>`
+}
+
+// ── Lent (brutalist) markup ──
+function lentMarkup(breviary: BreviarySource, L: Strings): string {
+  const s = loadSettings()
+  return `<div class="lent">
+    <div class="lent-head">
+      <div class="lent-kicker">${esc(breviary.badge)} · ${esc(breviary.name.toUpperCase())}</div>
+      <div class="lent-title">${esc(L.title)}</div>
+      <div class="lent-season">${esc(L.s.lent)}</div>
+    </div>
+    <div class="lent-meta">${esc(L.s.lent.toUpperCase())} · NO ${esc(L.alleluia.toUpperCase())}</div>
+    <div class="lent-sec">${esc(L.hoursHead)}</div>
+    <div id="hour-list"></div>
+    <div class="lent-sec">${esc(L.nowGlasses)}</div>
+    <div class="lent-block" id="glasses-panel"></div>
+    <div class="lent-sec">${esc(L.settingsHead)}</div>
+    <div class="lent-srow tap" id="brev-row"><span class="k">${esc(L.rows.breviary)}</span><span class="v">${esc(breviary.badge)} · ${esc(breviary.name)} ›</span></div>
+    <div class="lent-srow"><span class="k">${esc(L.rows.scroll)}</span><span class="v"><select id="set-scroll" style="background:none;border:none;font:inherit;color:inherit">
+      <option value="manual"${s.scrollMode === 'manual' ? ' selected' : ''}>${esc(L.modes.manual.toUpperCase())}</option>
+      <option value="auto"${s.scrollMode === 'auto' ? ' selected' : ''}>${esc(L.modes.auto.toUpperCase())}</option>
+      <option value="head-gesture"${s.scrollMode === 'head-gesture' ? ' selected' : ''}>${esc(L.modes['head-gesture'].toUpperCase())}</option>
+    </select></span></div>
+    <div class="lent-srow"><span class="k">${esc(L.rows.tap)}</span><span class="v"><select id="set-tap" style="background:none;border:none;font:inherit;color:inherit"><option value="1"${s.tapToAdvance ? ' selected' : ''}>${esc(L.onWord.toUpperCase())}</option><option value="0"${!s.tapToAdvance ? ' selected' : ''}>${esc(L.offWord.toUpperCase())}</option></select></span></div>
+    <div class="lent-srow tap" id="visible-row"><span class="k">${esc(L.rows.visible)}</span><span class="v" id="visible-val"></span></div>
+    <div id="hour-toggles" class="ilp-toggle-grid" hidden style="padding:0 20px"></div>
+    <input id="set-seconds" type="hidden" value="${s.autoScrollSeconds}">
+    <div class="lent-srow" id="adv-toggle"><span class="k">Advanced</span><span class="v">event log & cache ›</span></div>
+    <div id="adv-body" hidden style="padding:0 4px">
+      <div class="ilp-prefetch" id="prefetch" hidden><span id="prefetch-label"></span><div class="bar"><div class="fill" id="prefetch-fill"></div></div></div>
+      <div class="lent-srow"><span class="k">Date</span><span class="v"><input id="date-input" type="date" value="${todayInputValue()}" style="background:none;border:1px solid var(--lhair);color:inherit;font:inherit"></span></div>
+      <div class="lent-srow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span> <span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
+      <pre class="ilp-log" id="event-log" style="margin:10px 20px 0"></pre>
+    </div>
+    <div class="lent-note"><b>Q:</b> Where did my CSS / formatting go?<br><b>A:</b> It's Lent. We gave that up. It'll be back on Easter.</div>
+  </div>`
+}
+
+function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null
+  const hourList = $('hour-list')!
+  const panel = $('glasses-panel')!
+  const logEl = $('event-log') as HTMLPreElement | null
 
   let currentHours: HourInfo[] = []
-
-  function updateHeroPill(phase: LiturgyPhase) {
-    const config: Record<LiturgyPhase, { label: string; className: string }> = {
-      idle: { label: t.ready, className: 'is-ready' },
-      connecting: { label: 'Connecting', className: 'is-connecting' },
-      connected: { label: 'Connected', className: 'is-connected' },
-      mock: { label: 'Mock', className: 'is-mock' },
-      loading: { label: 'Loading', className: 'is-loading' },
-      reading: { label: t.reading, className: 'is-reading' },
-      error: { label: 'Error', className: 'is-error' },
-    }
-    const next = config[phase]
-    heroPill.textContent = next.label
-    heroPill.className = `hero-pill ${next.className}`
-  }
-
-  function setPhase(phase: LiturgyPhase) {
-    updateHeroPill(phase)
-    connectBtn.disabled = phase === 'connecting' || phase === 'loading'
-    loadBtn.disabled = phase === 'loading'
-    if (phase === 'reading') readingCard.classList.add('visible')
-    else readingCard.classList.remove('visible')
-  }
+  let activeSlug: string | null = null
+  let activeHourName = ''
+  const visited = new Set<string>()
+  let phase: LiturgyPhase = 'idle'
 
   function appendLog(text: string) {
+    if (!logEl) return
     const time = new Date().toLocaleTimeString()
     logEl.textContent = `[${time}] ${text}\n${logEl.textContent ?? ''}`
-    const lines = logEl.textContent.split('\n')
+    const lines = (logEl.textContent ?? '').split('\n')
     if (lines.length > 200) logEl.textContent = lines.slice(0, 200).join('\n')
   }
 
   function hourKeyFromName(name: string): string {
     return name.toLowerCase().replace(/\s+/g, '-').replace(/yesterday's-/, '')
   }
+  function latinFor(name: string): string {
+    const key = hourKeyFromName(name)
+    return breviary.hours.find((h) => h.key === key)?.latin || ''
+  }
+
+  function stateGlyphIlp(slug: string): string {
+    if (slug === activeSlug && phase === 'reading') return '<span class="ilp-mani">☞</span>'
+    if (visited.has(slug)) return '<span class="tm">✓</span>'
+    return '<span class="tm"></span>'
+  }
 
   function renderHourButtons(hours: HourInfo[]) {
     const s = loadSettings()
-    hourGrid.innerHTML = hours
-      .filter(h => !s.hiddenHours.includes(hourKeyFromName(h.name)))
-      .map(h => `<button class="hour-btn" data-slug="${h.slug}" data-date="${(h as any).date || ''}" type="button">${h.name}</button>`)
-      .join('')
+    const shown = hours.filter((h) => !s.hiddenHours.includes(hourKeyFromName(h.name)))
+    if (lent) {
+      hourList.innerHTML = shown.map((h, i) => {
+        const live = h.slug === activeSlug && phase === 'reading'
+        const cls = live ? ' live' : visited.has(h.slug) ? ' done' : ''
+        const right = live ? 'NOW' : visited.has(h.slug) ? '✓' : ''
+        return `<button class="lent-hr${cls}" data-slug="${esc(h.slug)}"><span class="n">${String(i + 1).padStart(2, '0')}</span><span class="nm">${esc(h.name)}</span><span class="t">${right}</span></button>`
+      }).join('')
+    } else {
+      hourList.innerHTML = shown.map((h, i) => {
+        const num = ROMAN_HOURS[i] || roman(i + 1)
+        const live = h.slug === activeSlug && phase === 'reading'
+        const lt = latinFor(h.name)
+        return `<button class="ilp-hour${live ? ' live' : visited.has(h.slug) ? ' done' : ''}" data-slug="${esc(h.slug)}">
+          <span class="rub">${num}</span>
+          <div class="ilp-main"><span class="nm">${esc(h.name)}</span>${lt ? `<span class="lt">${esc(lt)}</span>` : ''}</div>
+          ${stateGlyphIlp(h.slug)}
+        </button>`
+      }).join('')
+    }
   }
 
-  function updateReadingView(text: string, progress: string) {
-    if (!text && !progress) {
-      readingSectionEl.textContent = ''
-      readingProgressEl.textContent = ''
-      readingTextEl.textContent = ''
-      prevBtn.disabled = true
-      nextBtn.disabled = true
+  function refreshPanel() {
+    const st = controller.getState() as any
+    const reading = st.view === 'reading' && Array.isArray(st.pages) && st.pages.length > 0
+    if (!reading) {
+      if (lent) { panel.innerHTML = `<div class="bh">—</div><div class="bt" style="font-size:16px;opacity:.6;padding:12px">${esc(L.ui.reading)}: —</div>` }
+      else { panel.className = 'ilp-panel is-empty'; panel.innerHTML = `<div class="ilp-panel-h">${icon('glasses', { size: 12, stroke: 'var(--gold)' })} —</div><div class="ilp-psalm-sub" style="text-align:center;margin-top:10px">${esc(L.ui.reading)}: —</div>` }
       return
     }
-    readingSectionEl.textContent = t.reading + ' on glasses'
-    readingProgressEl.textContent = progress
-    readingTextEl.textContent = text || '(view on glasses)'
-    prevBtn.disabled = false
-    nextBtn.disabled = false
+    const page = String(st.pages[st.pageIndex] || '')
+    const fol = st.pageIndex + 1, total = st.pages.length
+    const p = parsePage(page)
+    const hour = activeHourName || ''
+    if (lent) {
+      panel.innerHTML = `<div class="bh">${esc(hour)}</div>
+        <div class="bt">${esc(p.section || '—')}</div>
+        <div class="bs">${esc(p.sub || '')}${p.sub ? ' — ' : ''}${fol} / ${total}</div>
+        <div class="bctrl"><button class="bbtn" data-act="prev">${esc(L.ui.prev)}</button><button class="bbtn" data-act="next">${esc(L.ui.next)}</button><button class="bbtn x" data-act="stop">${esc(L.ui.stop)}</button></div>`
+      return
+    }
+    const pct = total > 1 ? Math.round((fol / total) * 100) : 100
+    const couplet = (p.v || p.r)
+      ? `<div class="ilp-vers">${p.v ? `<span class="m">℣.</span> ${esc(p.v)}` : ''}${(p.v && p.r) ? '<br>' : ''}${p.r ? `<span class="m">℟.</span> ${esc(p.r)}` : ''}</div>`
+      : ''
+    panel.className = 'ilp-panel'
+    panel.innerHTML = `
+      <div class="ilp-panel-h">${icon('glasses', { size: 12, stroke: 'var(--gold)' })} ${esc(hour)}</div>
+      <div class="ilp-pbody">
+        <div class="ilp-cap">${esc(versal(p.section || 'P'))}</div>
+        <div style="flex:1;min-width:0"><div class="ilp-psalm">${esc(p.section || '')}</div>${p.sub ? `<div class="ilp-psalm-sub">${esc(p.sub)}</div>` : ''}</div>
+      </div>
+      ${couplet}
+      <div class="ilp-prog"><span class="lbl">${esc(L.ui.fol)} ${fol}</span><div class="bar"><div class="fill" style="width:${pct}%"></div></div><span class="lbl">${esc(L.ui.of)} ${total}</span></div>
+      <div class="ilp-ctrls"><span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
+  }
+
+  function updateVisibleVal() {
+    const s = loadSettings()
+    const total = currentHours.length
+    const hidden = currentHours.filter((h) => s.hiddenHours.includes(hourKeyFromName(h.name))).length
+    const val = $('visible-val'); if (val) val.textContent = `${total - hidden} / ${total}`
+  }
+
+  function renderHourToggles() {
+    const grid = $('hour-toggles'); if (!grid) return
+    const s = loadSettings()
+    grid.innerHTML = breviary.hours.map((h) => `<label class="ilp-toggle"><input type="checkbox" data-hour-key="${esc(h.key)}"${s.hiddenHours.includes(h.key) ? '' : ' checked'}> ${esc(h.label)}</label>`).join('')
+  }
+
+  const setPhase = (p: LiturgyPhase) => {
+    phase = p
+    if (p === 'reading') refreshPanel()
+    if (currentHours.length) renderHourButtons(currentHours)
   }
 
   const controller = createLiturgyController({
     setPhase,
     log: appendLog,
-    onReadingChanged: updateReadingView,
-    onHoursLoaded(hours) {
-      currentHours = hours
-      renderHourButtons(hours)
-    },
+    onReadingChanged: () => refreshPanel(),
+    onHoursLoaded(hours) { currentHours = hours; renderHourButtons(hours); updateVisibleVal() },
   })
 
-  setPhase('idle')
+  refreshPanel()
+  renderHourToggles()
+  updateVisibleVal()
 
-  // ── Event wiring ──
-
-  connectBtn.addEventListener('click', () => { void controller.connect() })
-  loadBtn.addEventListener('click', () => {
-    const date = dateInputToApi(dateInput.value)
-    void controller.loadHours(date)
+  // ── events ──
+  hourList.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-slug]')
+    if (!btn) return
+    const slug = btn.dataset.slug!
+    activeSlug = slug
+    activeHourName = currentHours.find((h) => h.slug === slug)?.name ?? slug
+    visited.add(slug)
+    renderHourButtons(currentHours)
+    void controller.selectHour(slug).then(() => { renderHourButtons(currentHours); refreshPanel() })
   })
-  hourGrid.addEventListener('click', (e) => {
-    const target = (e.target as HTMLElement).closest<HTMLButtonElement>('.hour-btn')
-    if (!target) return
-    const slug = target.dataset.slug
-    if (slug) {
-      hourGrid.querySelectorAll('.hour-btn').forEach(b => b.classList.remove('active'))
-      target.classList.add('active')
-      void controller.selectHour(slug)
-    }
-  })
-  prevBtn.addEventListener('click', () => controller.scrollUp())
-  nextBtn.addEventListener('click', () => controller.scrollDown())
-  stopReadingBtn.addEventListener('click', () => controller.stopReading())
-  clearLogBtn.addEventListener('click', () => { logEl.textContent = '' })
 
-  const tapAdvanceCheck = document.querySelector<HTMLInputElement>('#tap-advance-check')!
-  tapAdvanceCheck.addEventListener('change', () => {
-    const s = loadSettings()
-    s.tapToAdvance = tapAdvanceCheck.checked
-    saveSettings(s)
+  panel.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act
+    if (act === 'prev') void controller.scrollUp().then(refreshPanel)
+    else if (act === 'next') void controller.scrollDown().then(refreshPanel)
+    else if (act === 'stop') { controller.stopReading(); activeSlug = null; renderHourButtons(currentHours); refreshPanel() }
+  })
+
+  $('brev-row')?.addEventListener('click', async () => {
+    const newId = await showBreviaryPicker()
+    if (newId !== breviary.id) location.reload()
+  })
+
+  $('set-scroll')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.scrollMode = (e.target as HTMLSelectElement).value as ScrollMode; saveSettings(s)
+    appendLog(`Scroll mode: ${s.scrollMode}`)
+  })
+  $('set-tap')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.tapToAdvance = (e.target as HTMLSelectElement).value === '1'; saveSettings(s)
     appendLog(`Tap to advance: ${s.tapToAdvance ? 'on' : 'off'}`)
   })
-
-  scrollModeSelect.addEventListener('change', () => {
-    const s = loadSettings()
-    s.scrollMode = scrollModeSelect.value as ScrollMode
-    saveSettings(s)
-    appendLog(`Scroll mode: ${s.scrollMode}`)
-    if (s.scrollMode === 'head-gesture') {
-      appendLog('Head gestures: nod down = next, nod up = prev, tilt right = select, tilt left = back')
-    }
+  $('set-seconds')?.addEventListener('change', (e) => {
+    const val = Number((e.target as HTMLInputElement).value)
+    if (val >= 2 && val <= 60) { const s = loadSettings(); s.autoScrollSeconds = val; saveSettings(s); appendLog(`Auto-scroll: ${val}s`) }
   })
-
-  scrollSpeedInput.addEventListener('change', () => {
-    const val = Number(scrollSpeedInput.value)
-    if (val >= 2 && val <= 60) {
-      const s = loadSettings()
-      s.autoScrollSeconds = val
-      saveSettings(s)
-      appendLog(`Auto-scroll speed: ${val}s`)
-    }
+  $('visible-row')?.addEventListener('click', () => {
+    const grid = $('hour-toggles'); if (grid) grid.hidden = !grid.hidden
   })
-
-  hourToggles.addEventListener('change', () => {
-    const checkboxes = hourToggles.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+  $('hour-toggles')?.addEventListener('change', () => {
+    const boxes = $('hour-toggles')!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     const hidden: string[] = []
-    checkboxes.forEach(cb => {
-      const key = cb.dataset.hourKey
-      if (key && !cb.checked) hidden.push(key)
-    })
-    const s = loadSettings()
-    s.hiddenHours = hidden
-    saveSettings(s)
-    renderHourButtons(currentHours)
-    appendLog(`Updated visible hours`)
+    boxes.forEach((cb) => { if (cb.dataset.hourKey && !cb.checked) hidden.push(cb.dataset.hourKey) })
+    const s = loadSettings(); s.hiddenHours = hidden; saveSettings(s)
+    renderHourButtons(currentHours); updateVisibleVal()
+  })
+  $('adv-toggle')?.addEventListener('click', () => { const b = $('adv-body'); if (b) b.hidden = !b.hidden })
+  $('clear-log')?.addEventListener('click', () => { if (logEl) logEl.textContent = '' })
+  $('date-input')?.addEventListener('change', (e) => {
+    void controller.loadHours(dateInputToApi((e.target as HTMLInputElement).value))
+  })
+  $('refresh-all')?.addEventListener('click', async () => {
+    const stats = cacheStats(); clearCache(); appendLog(`Cleared cache (${stats.entries} entries)`)
+    await runPrefetch(); void controller.loadHours(dateInputToApi(($('date-input') as HTMLInputElement)?.value || todayInputValue()))
   })
 
-  refreshAllBtn.addEventListener('click', async () => {
-    const stats = cacheStats()
-    clearCache()
-    appendLog(`Cleared cache (${stats.entries} entries, ~${Math.round(stats.approxBytes / 1024)} KB)`)
-    await runPrefetch(lang)
-    // Reload current date after refresh
-    void controller.loadHours(dateInputToApi(dateInput.value))
-  })
-
-  langBadge.addEventListener('click', async () => {
-    const newLang = await showLanguagePicker()
-    if (newLang !== lang) {
-      setLanguage(newLang)
-      location.reload()
-    }
-  })
-
-  // ── Startup: prefetch the week in the background, auto-load today, connect glasses ──
-
-  async function runPrefetch(l: Language) {
-    const dates = nextNDates(7)
-    prefetchCard.hidden = false
-    prefetchLabel.textContent = 'Downloading week…'
-    prefetchFill.style.width = '0%'
+  async function runPrefetch() {
+    const card = $('prefetch'), label = $('prefetch-label'), fill = $('prefetch-fill')
+    if (card) card.hidden = false
     const onProgress = (p: PrefetchProgress) => {
       const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0
-      prefetchFill.style.width = `${pct}%`
-      prefetchLabel.textContent = `${p.done}/${p.total}${p.failed ? ` (${p.failed} failed)` : ''} · ${p.currentLabel ?? ''}`
+      if (fill) fill.style.width = `${pct}%`
+      if (label) label.textContent = `${p.done}/${p.total}${p.failed ? ` (${p.failed} failed)` : ''}`
     }
     try {
-      const result = await prefetchWeek(dates, l, onProgress)
-      prefetchLabel.textContent = `${result.done}/${result.total} cached${result.failed ? ` · ${result.failed} failed` : ''}`
-      prefetchCard.querySelector('.prefetch-banner')?.classList.add('is-done')
-      setTimeout(() => { prefetchCard.hidden = true }, 3000)
-    } catch (err) {
-      appendLog(`Prefetch error: ${(err as Error).message}`)
-    }
+      const r = await prefetchWeek(nextNDates(7), breviary.id, onProgress)
+      if (label) label.textContent = `${r.done}/${r.total} cached`
+      setTimeout(() => { if (card) card.hidden = true }, 3000)
+    } catch (err) { appendLog(`Prefetch error: ${(err as Error).message}`) }
   }
 
   async function startup() {
-    // IMPORTANT: do NOT prefetch concurrently with the initial load/connect.
-    // Let the core flow finish so the first bridge.createStartUpPageContainer
-    // call lands before extra network traffic starts queuing.
-    await Promise.all([
-      controller.loadHours(),
-      controller.connect(),
-    ])
-    // Belt-and-suspenders: the internal race-window checks inside loadHours()
-    // and connect() each guard on the OTHER having completed — but on some
-    // webviews their microtask ordering lets both run before the peer's
-    // mutation lands. Call the explicit render-hour-list hook so the glasses
-    // definitely get the list once both finish.
+    await Promise.all([controller.loadHours(), controller.connect()])
     await controller.renderHourList().catch((err) => appendLog(`Render error: ${err}`))
-    // Background-prefetch the rest of the week now that the hour list is live.
-    void runPrefetch(lang)
+    void runPrefetch()
   }
   void startup()
 }

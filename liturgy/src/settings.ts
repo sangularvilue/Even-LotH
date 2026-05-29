@@ -1,9 +1,10 @@
 import type { LiturgySettings, Language, ScrollMode } from './types'
+import { getBreviary, breviaryIdForLegacyLanguage, DEFAULT_BREVIARY_ID } from './breviaries'
 
 const STORAGE_KEY = 'even.liturgy.settings.v1'
 
 const DEFAULTS: LiturgySettings = {
-  language: null,
+  breviaryId: null,
   scrollMode: 'manual',
   autoScrollSeconds: 8,
   tapToAdvance: true,
@@ -19,8 +20,15 @@ export function loadSettings(): LiturgySettings {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULTS }
     const parsed = JSON.parse(raw)
+    // v2 migration: prefer an explicit breviaryId; otherwise map the legacy
+    // `language` value (pre-v2 users) onto its breviary; otherwise unset.
+    const breviaryId = typeof parsed.breviaryId === 'string' && parsed.breviaryId
+      ? parsed.breviaryId
+      : (parsed.language === 'en' || parsed.language === 'it')
+        ? breviaryIdForLegacyLanguage(parsed.language)
+        : null
     return {
-      language: parsed.language === 'it' ? 'it' : parsed.language === 'en' ? 'en' : null,
+      breviaryId,
       scrollMode: parsed.scrollMode === 'auto' ? 'auto' : parsed.scrollMode === 'head-gesture' ? 'head-gesture' : 'manual',
       autoScrollSeconds: typeof parsed.autoScrollSeconds === 'number' && parsed.autoScrollSeconds > 0
         ? parsed.autoScrollSeconds : DEFAULTS.autoScrollSeconds,
@@ -39,14 +47,20 @@ export function loadSettings(): LiturgySettings {
   }
 }
 
-export function getLanguage(): Language {
-  return loadSettings().language ?? 'en'
+export function getBreviaryId(): string {
+  return loadSettings().breviaryId ?? DEFAULT_BREVIARY_ID
 }
 
-export function setLanguage(lang: Language): void {
+export function setBreviaryId(id: string): void {
   const s = loadSettings()
-  s.language = lang
+  s.breviaryId = id
   saveSettings(s)
+}
+
+// Convenience shim: the UI STRINGS tables are keyed by language, derived from
+// the active breviary.
+export function getLanguage(): Language {
+  return getBreviary(getBreviaryId()).language
 }
 
 export function saveSettings(settings: LiturgySettings): void {

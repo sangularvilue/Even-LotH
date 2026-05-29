@@ -25,5 +25,9 @@ export default function handler(req, res) {
     date: iso,
   }))
 
+  // Lezionario (daily Mass readings) — sourced from liturgiadelleore.it,
+  // appended after the Office hours. Listed last so it reads as an extra.
+  hours.push({ slug: 'lezionario', name: 'Lezionario (Messa)', date: iso })
+
   res.json({ date: iso, hours })
 }

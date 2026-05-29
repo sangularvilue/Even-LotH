@@ -1,3 +1,8 @@
 node_modules/
 dist/
 .vercel
+
+# scratch / local-only (design handoff prototype, third-party test fixtures, stray screenshots)
+_design_illumination/
+test-fixtures/
+glasses_*.png

@@ -2,20 +2,22 @@
   "package_id": "com.bnm.evendev.liturgy",
   "edition": "202601",
   "name": "Liturgy of the Hours",
-  "version": "1.1.1",
+  "version": "1.3.0",
   "min_app_version": "2.0.0",
   "min_sdk_version": "0.0.7",
   "tagline": "Pray the ancient prayer of the Church on your G2.",
-  "description": "Liturgy of the Hours prayer reader for Even G2 glasses. Browse and read the Divine Office hour by hour with clean, formatted text. English (divineoffice.org) and Italian / CEI (rosarioonline) supported; pick your language on first launch.",
+  "description": "Multi-breviary Divine Office reader for Even G2 glasses. Browse and read the office hour by hour with clean, formatted text. Choose your breviary: Divine Office in English (divineoffice.org), Liturgia delle Ore in Italian / CEI (rosarioonline, with the daily Lezionario), or the Ordinariate Daily Office (Divine Worship, dwdo.uk). Pick your breviary on first launch. The companion interface is an illuminated breviary whose accent follows the liturgical season, with a light/dark theme.",
   "author": "Will Grannis",
   "entrypoint": "index.html",
   "permissions": [
     {
       "name": "network",
-      "desc": "Fetches daily prayer texts from divineoffice.org via loth.grannis.xyz API",
+      "desc": "Fetches daily prayer texts (divineoffice.org, liturgiadelleore.it, dwdo.uk) via the loth.grannis.xyz API",
       "whitelist": [
         "https://loth.grannis.xyz",
-        "https://divineoffice.org"
+        "https://divineoffice.org",
+        "https://www.liturgiadelleore.it",
+        "https://dwdo.uk"
       ]
     }
   ],

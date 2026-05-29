@@ -12,7 +12,8 @@ import {
 import { withTimeout } from './shared/async'
 import { getRawEventType, normalizeEventType } from './shared/even-events'
 import { fetchHours, fetchHour } from './api-client'
-import { loadSettings } from './settings'
+import { loadSettings, getBreviaryId } from './settings'
+import { getBreviary } from './breviaries'
 import { startHeadGestures, stopHeadGestures } from './head-gestures'
 import type { HourInfo, LiturgyPhase, PrayerSection } from './types'
 
@@ -784,19 +785,21 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       state.hours = [...index.hours]
 
-      // Append yesterday's Evening & Night Prayer for night workers (bilingual match)
-      if (yesterdayIndex?.hours) {
+      // Append yesterday's evening & night office for night workers, when the
+      // active breviary supports it. Labels follow the breviary's language.
+      const breviary = getBreviary(getBreviaryId())
+      if (breviary.capabilities.yesterday && yesterdayIndex?.hours) {
         const isEvening = (name: string) => {
           const n = name.toLowerCase()
-          return n.includes('evening prayer') || n === 'vespri'
+          return n.includes('evening prayer') || n === 'vespri' || n === 'evensong'
         }
         const isNight = (name: string) => {
           const n = name.toLowerCase()
-          return n.includes('night prayer') || n === 'compieta'
+          return n.includes('night prayer') || n === 'compieta' || n === 'compline'
         }
-        const italianIndex = index.hours.some(h => h.slug === 'vespri' || h.slug === 'compieta')
-        const prefix = italianIndex ? '' : "Yesterday's "
-        const suffix = italianIndex ? ' di ieri' : ''
+        const it = breviary.language === 'it'
+        const prefix = it ? '' : "Yesterday's "
+        const suffix = it ? ' di ieri' : ''
         const ep = yesterdayIndex.hours.find(h => isEvening(h.name))
         const np = yesterdayIndex.hours.find(h => isNight(h.name))
         if (ep) state.hours.push({ ...ep, name: `${prefix}${ep.name}${suffix}` })
@@ -852,6 +855,25 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     }
   }
 
+  // Companion-driven page navigation (mirrors the glasses SCROLL events) so the
+  // "Now on the glasses" panel's prev/next controls work from the phone.
+  async function scrollDown(): Promise<void> {
+    if (state.view !== 'reading') return
+    if (state.pageIndex < state.pages.length - 1) {
+      state.pageIndex++
+      await updatePageText()
+      onReadingChanged?.('', progressStr())
+    }
+  }
+  async function scrollUp(): Promise<void> {
+    if (state.view !== 'reading') return
+    if (state.pageIndex > 0) {
+      state.pageIndex--
+      await updatePageText()
+      onReadingChanged?.('', progressStr())
+    }
+  }
+
   function stopReading(): void {
     void stopHeadGestureMode()
     stopSpinner()
@@ -879,6 +901,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     connect,
     loadHours,
     selectHour,
+    scrollUp,
+    scrollDown,
     stopReading,
     renderHourList,
     getState: () => ({ ...state }),

@@ -5,38 +5,38 @@
 // calls clearCache() to wipe everything.
 //
 // Key layout:
-//   even.liturgy.cache.v1.<lang>.<date>.index        → HoursIndex JSON
-//   even.liturgy.cache.v1.<lang>.<date>.<slug>       → HourContent JSON
+//   even.liturgy.cache.v2.<breviaryId>.<date>.index   → HoursIndex JSON
+//   even.liturgy.cache.v2.<breviaryId>.<date>.<slug>  → HourContent JSON
 
-import type { HoursIndex, HourContent, Language } from './types'
+import type { HoursIndex, HourContent } from './types'
 
-const PREFIX = 'even.liturgy.cache.v1'
+const PREFIX = 'even.liturgy.cache.v2'
 
-function key(lang: Language, date: string, tail: string): string {
-  return `${PREFIX}.${lang}.${date}.${tail}`
+function key(breviaryId: string, date: string, tail: string): string {
+  return `${PREFIX}.${breviaryId}.${date}.${tail}`
 }
 
-export function getCachedIndex(lang: Language, date: string): HoursIndex | null {
-  return read<HoursIndex>(key(lang, date, 'index'))
+export function getCachedIndex(breviaryId: string, date: string): HoursIndex | null {
+  return read<HoursIndex>(key(breviaryId, date, 'index'))
 }
 
-export function putCachedIndex(lang: Language, date: string, idx: HoursIndex): void {
-  write(key(lang, date, 'index'), idx)
+export function putCachedIndex(breviaryId: string, date: string, idx: HoursIndex): void {
+  write(key(breviaryId, date, 'index'), idx)
 }
 
-export function getCachedHour(lang: Language, date: string, slug: string): HourContent | null {
-  return read<HourContent>(key(lang, date, slug))
+export function getCachedHour(breviaryId: string, date: string, slug: string): HourContent | null {
+  return read<HourContent>(key(breviaryId, date, slug))
 }
 
-export function putCachedHour(lang: Language, date: string, slug: string, hour: HourContent): void {
-  write(key(lang, date, slug), hour)
+export function putCachedHour(breviaryId: string, date: string, slug: string, hour: HourContent): void {
+  write(key(breviaryId, date, slug), hour)
 }
 
-export function hasCachedHour(lang: Language, date: string, slug: string): boolean {
-  return localStorage.getItem(key(lang, date, slug)) !== null
+export function hasCachedHour(breviaryId: string, date: string, slug: string): boolean {
+  return localStorage.getItem(key(breviaryId, date, slug)) !== null
 }
 
-// Remove every cached entry (both languages, all dates). Used by "Refresh all".
+// Remove every cached entry (all breviaries, all dates). Used by "Refresh all".
 export function clearCache(): void {
   const toDelete: string[] = []
   for (let i = 0; i < localStorage.length; i++) {

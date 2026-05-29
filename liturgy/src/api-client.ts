@@ -1,5 +1,6 @@
-import type { HoursIndex, HourContent, Language } from './types'
-import { getLanguage } from './settings'
+import type { HoursIndex, HourContent } from './types'
+import { getBreviaryId } from './settings'
+import { getBreviary, type BreviarySource } from './breviaries'
 import { getCachedIndex, putCachedIndex, getCachedHour, putCachedHour, hasCachedHour } from './cache'
 
 // When running from .ehpk (no local API), use the Vercel deployment.
@@ -7,42 +8,36 @@ import { getCachedIndex, putCachedIndex, getCachedHour, putCachedHour, hasCached
 const isLocalFile = window.location.protocol === 'file:' || !window.location.host.includes('grannis')
 const SERVER_URL = isLocalFile ? 'https://loth.grannis.xyz' : ''
 
-function endpointForLang(lang: Language): { list: string; hour: (slug: string, date: string) => string } {
-  if (lang === 'it') {
-    return {
-      list: `${SERVER_URL}/api/hours_it`,
-      hour: (slug, date) => `${SERVER_URL}/api/hour_it?slug=${encodeURIComponent(slug)}&date=${date}`,
-    }
-  }
+function endpointForBreviary(b: BreviarySource): { list: string; hour: (slug: string, date: string) => string } {
   return {
-    list: `${SERVER_URL}/api/hours`,
-    hour: (slug, date) => `${SERVER_URL}/api/hour/${slug}?date=${date}`,
+    list: `${SERVER_URL}${b.api.list}`,
+    hour: (slug, date) => `${SERVER_URL}${b.api.hour(slug, date)}`,
   }
 }
 
 // date format: YYYYMMDD
-export async function fetchHours(date: string, lang: Language = getLanguage()): Promise<HoursIndex> {
-  const cached = getCachedIndex(lang, date)
+export async function fetchHours(date: string, breviaryId: string = getBreviaryId()): Promise<HoursIndex> {
+  const cached = getCachedIndex(breviaryId, date)
   if (cached) return cached
 
-  const ep = endpointForLang(lang)
+  const ep = endpointForBreviary(getBreviary(breviaryId))
   const tzOffset = new Date().getTimezoneOffset()
   const res = await fetch(`${ep.list}?date=${date}&tz=${tzOffset}`)
   if (!res.ok) throw new Error(`Server error: ${res.status}`)
   const idx = await res.json() as HoursIndex
-  putCachedIndex(lang, date, idx)
+  putCachedIndex(breviaryId, date, idx)
   return idx
 }
 
-export async function fetchHour(slug: string, date: string, lang: Language = getLanguage()): Promise<HourContent> {
-  const cached = getCachedHour(lang, date, slug)
+export async function fetchHour(slug: string, date: string, breviaryId: string = getBreviaryId()): Promise<HourContent> {
+  const cached = getCachedHour(breviaryId, date, slug)
   if (cached) return cached
 
-  const ep = endpointForLang(lang)
+  const ep = endpointForBreviary(getBreviary(breviaryId))
   const res = await fetch(ep.hour(slug, date))
   if (!res.ok) throw new Error(`Server error: ${res.status}`)
   const hour = await res.json() as HourContent
-  putCachedHour(lang, date, slug, hour)
+  putCachedHour(breviaryId, date, slug, hour)
   return hour
 }
 
@@ -69,7 +64,7 @@ export type PrefetchProgress = {
 // cached. Calls onProgress after every individual fetch (or cache hit).
 export async function prefetchWeek(
   dates: string[],
-  lang: Language = getLanguage(),
+  breviaryId: string = getBreviaryId(),
   onProgress?: (p: PrefetchProgress) => void,
 ): Promise<PrefetchProgress> {
   // First, get the hour list for each day (sequentially so we report real progress)
@@ -83,7 +78,7 @@ export async function prefetchWeek(
 
   for (const date of dates) {
     try {
-      const idx = await fetchHours(date, lang)
+      const idx = await fetchHours(date, breviaryId)
       for (const h of idx.hours) {
         allTasks.push({ date: (h as any).date || date, slug: h.slug, name: h.name })
       }
@@ -100,13 +95,13 @@ export async function prefetchWeek(
   // Then fetch each hour's content, skipping cached
   for (const t of allTasks) {
     const hourDate = t.date || ''
-    if (hasCachedHour(lang, hourDate, t.slug)) {
+    if (hasCachedHour(breviaryId, hourDate, t.slug)) {
       done++
       onProgress?.({ done, total, failed, currentLabel: `${t.name} (cached)` })
       continue
     }
     try {
-      await fetchHour(t.slug, hourDate, lang)
+      await fetchHour(t.slug, hourDate, breviaryId)
     } catch (err) {
       console.warn('Hour fetch failed', t.slug, hourDate, err)
       failed++

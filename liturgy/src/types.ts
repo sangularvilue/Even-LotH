@@ -37,7 +37,7 @@ export type DisplayColumns = 1 | 2
 export type Language = 'en' | 'it'
 
 export type LiturgySettings = {
-  language: Language | null  // null = not yet selected (triggers picker)
+  breviaryId: string | null  // null = not yet selected (triggers picker)
   scrollMode: ScrollMode
   autoScrollSeconds: number
   tapToAdvance: boolean

@@ -1,4 +1,5 @@
 import { scrapeHour, normalizeDate } from '../lib/scrape_it.js'
+import { scrapeLezionario } from '../lib/scrape_lezionario.js'
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -10,7 +11,11 @@ export default async function handler(req, res) {
   if (!rawDate) return res.status(400).json({ error: 'Missing date' })
 
   try {
-    const hour = await scrapeHour(slug, normalizeDate(rawDate))
+    // The Lezionario (daily Mass readings) comes from a different source
+    // (liturgiadelleore.it) than the Office hours (rosarioonline).
+    const hour = slug === 'lezionario'
+      ? await scrapeLezionario(rawDate)
+      : await scrapeHour(slug, normalizeDate(rawDate))
     res.json(hour)
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch Italian hour', detail: err.message, slug, date: rawDate })
