@@ -86,7 +86,7 @@ export const BREVIARIES: BreviarySource[] = [
     id: 'it-cei',
     name: 'Liturgia delle Ore',
     language: 'it',
-    publisher: 'CEI · rosarioonline',
+    publisher: 'CEI · liturgiadelleore.it',
     badge: 'IT',
     status: 'beta',
     api: {

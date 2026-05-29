@@ -1,4 +1,4 @@
-import { scrapeHour, normalizeDate } from '../lib/scrape_it.js'
+import { scrapeOfficeHour } from '../lib/scrape_office_it.js'
 import { scrapeLezionario } from '../lib/scrape_lezionario.js'
 
 export default async function handler(req, res) {
@@ -11,11 +11,11 @@ export default async function handler(req, res) {
   if (!rawDate) return res.status(400).json({ error: 'Missing date' })
 
   try {
-    // The Lezionario (daily Mass readings) comes from a different source
-    // (liturgiadelleore.it) than the Office hours (rosarioonline).
+    // All Italian content now comes from liturgiadelleore.it: the Office hours
+    // via SoloTestoGiorno.php (scrape_office_it) and the Lezionario separately.
     const hour = slug === 'lezionario'
       ? await scrapeLezionario(rawDate)
-      : await scrapeHour(slug, normalizeDate(rawDate))
+      : await scrapeOfficeHour(slug, rawDate)
     res.json(hour)
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch Italian hour', detail: err.message, slug, date: rawDate })
