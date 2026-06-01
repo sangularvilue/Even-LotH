@@ -19,7 +19,14 @@ export type GestureAction = 'scroll_up' | 'scroll_down' | 'tap' | 'double_tap'
 export type GestureCallback = (action: GestureAction) => void
 
 const REPORT_FREQ_MS = 100 // ImuReportPace.P100 — fastest reporting
-const DEFAULTS = { repeatMs: 1000, invert: false, smooth: 0.05, fb: 'ay' as 'ax' | 'ay' }
+const DEFAULTS = {
+  repeatMs: 1000,         // hold a tilt → repeat one page this often
+  invert: false,
+  smooth: 0.05,           // baseline drift toward true level when near neutral
+  fb: 'ay' as 'ax' | 'ay',
+  rearmMs: 350,           // must dwell near level this long before an opposite tilt can fire
+  rearmFrac: 0.5,         // "near level" = within deadzone * this fraction
+}
 
 let active = false
 let callback: GestureCallback | null = null
@@ -27,7 +34,9 @@ let logCb: ((msg: string) => void) | null = null
 let samples = 0
 let restPitch: number | null = null
 let lastEmit = 0
-let tiltActive = false
+let heldDir = 0       // direction currently held past the dead zone: +1 next, -1 prev, 0 neutral
+let armed = true      // may a FRESH/opposite tilt fire? re-armed only after dwelling near level
+let neutralSince = 0  // timestamp the head first re-entered the near-level zone (0 = not in it)
 
 function tune() { return { ...DEFAULTS, ...((globalThis as any).__HG || {}) } }
 function deadzoneDeg(): number {
@@ -69,22 +78,44 @@ export function handleImuEvent(event: any): boolean {
   if (samples <= 10) logCb?.(`IMU ax=${d.ax.toFixed(2)} ay=${d.ay.toFixed(2)} az=${d.az.toFixed(2)} Δ=${dev.toFixed(1)}°`)
 
   const dz = deadzoneDeg()
+  const now = Date.now()
+
+  // Near level: nothing fires. Let the baseline drift toward true level, and
+  // dwell here long enough to re-arm the NEXT deliberate tilt. A quick
+  // pass-through — returning the head to level, or overshooting past it — does
+  // NOT re-arm, so the return motion can no longer flip the page backwards.
   if (Math.abs(dev) < dz) {
-    // Inside the dead zone: let the rest baseline drift slowly, clear hold state.
     restPitch += (pitch - restPitch) * t.smooth
-    tiltActive = false
+    if (Math.abs(dev) < dz * t.rearmFrac) {
+      if (neutralSince === 0) neutralSince = now
+      if (!armed && now - neutralSince >= t.rearmMs) { armed = true; heldDir = 0 }
+    }
     return true
   }
-  // Beyond the dead zone: freeze the baseline and page once on entry, then once
-  // per repeatMs for as long as the head is held tilted.
-  const now = Date.now()
-  if (!tiltActive || now - lastEmit >= t.repeatMs) {
-    tiltActive = true
-    lastEmit = now
-    const right = (dev > 0) !== t.invert // tilt right → next page
-    logCb?.(`Head tilt ${right ? 'right → next' : 'left → prev'} (${dev.toFixed(0)}°)`)
-    callback?.(right ? 'scroll_down' : 'scroll_up')
+
+  // Beyond the dead zone.
+  neutralSince = 0
+  const dir = ((dev > 0) !== t.invert) ? 1 : -1 // +1 → next (scroll_down), -1 → prev (scroll_up)
+
+  if (dir === heldDir) {
+    // Same direction still held → repeat one page per repeatMs.
+    if (now - lastEmit >= t.repeatMs) {
+      lastEmit = now
+      logCb?.(`Head tilt ${dir > 0 ? 'right → next' : 'left → prev'} (held, ${dev.toFixed(0)}°)`)
+      callback?.(dir > 0 ? 'scroll_down' : 'scroll_up')
+    }
+    return true
   }
+
+  // A fresh / opposite-direction tilt. Only fire if we've re-armed by dwelling
+  // near level — this is what suppresses the return-to-level + overshoot that
+  // was reading as a backward page turn.
+  if (!armed) return true
+  armed = false
+  heldDir = dir
+  lastEmit = now
+  logCb?.(`Head tilt ${dir > 0 ? 'right → next' : 'left → prev'} (${dev.toFixed(0)}°)`)
+  callback?.(dir > 0 ? 'scroll_down' : 'scroll_up')
   return true
 }
 
@@ -111,7 +142,9 @@ export async function startHeadGestures(bridge: EvenAppBridge, cb: GestureCallba
   logCb = log ?? null
   samples = 0
   restPitch = null
-  tiltActive = false
+  heldDir = 0
+  armed = true
+  neutralSince = 0
   lastEmit = 0
   const ok = await setImu(bridge, true)
   active = ok
