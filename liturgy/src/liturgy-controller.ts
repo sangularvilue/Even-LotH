@@ -50,6 +50,7 @@ const BAR_HEIGHT = 30
 const CHARS_PER_LINE = 50
 const LINES_PER_PAGE = 7
 const AUTO_MIN_DWELL = 3 // seconds — floor so 1-line pages don't linger
+const NAV_DEBOUNCE_MS = 250 // ignore duplicate reading-nav gestures within this window
 
 function todayDateStr(): string {
   const d = new Date()
@@ -320,6 +321,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   let currentLayout: 'hours' | 'reading' | 'loading' | null = null
   let spinnerIntervalId: number | null = null
   let autoTimerId: number | null = null
+  let lastReadingNav = 0 // timestamp of the last accepted reading-nav gesture (debounce)
 
   function publishPhase(phase: LiturgyPhase): void {
     setPhase?.(phase)
@@ -732,6 +734,18 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       log('Back to hour list')
       await renderHourListPage()
       return
+    }
+
+    // Debounce duplicate nav events: some gestures (notably the R1 ring) deliver
+    // the same event twice in quick succession, which advanced 2 pages per
+    // gesture. Ignore a second nav within NAV_DEBOUNCE_MS (far faster than any
+    // intentional page turn). Confirmed/tuned via the input log.
+    if (eventType === OsEventTypeList.CLICK_EVENT
+      || eventType === OsEventTypeList.SCROLL_TOP_EVENT
+      || eventType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+      const now = Date.now()
+      if (now - lastReadingNav < NAV_DEBOUNCE_MS) { log('(debounced duplicate gesture)'); return }
+      lastReadingNav = now
     }
 
     // Tap advances to next page
