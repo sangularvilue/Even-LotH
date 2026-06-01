@@ -636,6 +636,14 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         }
       }
 
+      // ── Input diagnostics: log every gesture (ring vs touchpad) so a
+      // double-advance / duplicate-event bug shows itself in the Event Log. ──
+      const src = event?.sysEvent?.eventSource
+      const srcName = src === 2 ? 'ring' : src === 1 ? 'glassesR' : src === 3 ? 'glassesL' : (src == null ? '—' : `src${src}`)
+      const field = event.listEvent ? 'list' : event.textEvent ? 'text' : event.sysEvent ? 'sys' : '?'
+      const nm: Record<number, string> = { 0: 'CLICK', 1: 'SCROLL_TOP', 2: 'SCROLL_BOTTOM', 3: 'DOUBLE', 4: 'FG_ENTER', 5: 'FG_EXIT', 6: 'ABN_EXIT', 7: 'SYS_EXIT' }
+      log(`evt[${field}] src=${srcName} raw=${JSON.stringify(rawEventType)} → ${eventType == null ? '—' : (nm[eventType] ?? eventType)} idx=${incomingIndex} view=${state.view}`)
+
       if (state.view === 'loading') return
 
       if (state.view === 'hours') {

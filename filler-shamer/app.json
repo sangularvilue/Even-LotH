@@ -1,0 +1,20 @@
+{
+  "package_id": "com.bnm.evendev.fillershamer",
+  "edition": "202601",
+  "name": "Filler-Word Shamer",
+  "version": "0.1.0",
+  "min_app_version": "0.1.0",
+  "tagline": "Counts your 'um's and 'like's in real time on Even G2 glasses.",
+  "description": "Vosk on-device speech-to-text spike: live filler-word counter for Even G2 smart glasses.",
+  "author": "even-dev",
+  "entrypoint": "index.html",
+  "permissions": {
+    "network": [
+      "evenhub.evenrealities.com",
+      "ccoreilly.github.io"
+    ],
+    "fs": [
+      "./assets"
+    ]
+  }
+}
