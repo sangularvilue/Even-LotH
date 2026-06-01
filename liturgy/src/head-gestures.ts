@@ -90,8 +90,20 @@ export function handleImuEvent(event: any): boolean {
 
 async function setImu(bridge: EvenAppBridge, on: boolean): Promise<boolean> {
   const b = bridge as any
-  try { if (typeof b.imuControl === 'function') { await b.imuControl(on, REPORT_FREQ_MS); return true } } catch { /* fall through */ }
-  try { await b.callEvenApp('imuControl', { isOpen: on, reportFrq: REPORT_FREQ_MS }); return true } catch { return false }
+  if (typeof b.imuControl === 'function') {
+    try {
+      const r = await b.imuControl(on, REPORT_FREQ_MS)
+      logCb?.(`imuControl(${on}, ${REPORT_FREQ_MS}) → ${JSON.stringify(r)}`)
+      return r !== false // host returns a boolean ack; honor a rejection
+    } catch (e) { logCb?.(`imuControl threw: ${e} — trying callEvenApp`) }
+  } else {
+    logCb?.('bridge.imuControl missing (SDK?) — trying callEvenApp')
+  }
+  try {
+    const r = await b.callEvenApp('imuControl', { isOpen: on, reportFrq: REPORT_FREQ_MS })
+    logCb?.(`callEvenApp imuControl → ${JSON.stringify(r)}`)
+    return true
+  } catch (e) { logCb?.(`callEvenApp imuControl failed: ${e}`); return false }
 }
 
 export async function startHeadGestures(bridge: EvenAppBridge, cb: GestureCallback, log?: (msg: string) => void): Promise<boolean> {

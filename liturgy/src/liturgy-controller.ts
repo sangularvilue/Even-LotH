@@ -322,6 +322,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   let spinnerIntervalId: number | null = null
   let autoTimerId: number | null = null
   let lastReadingNav = 0 // timestamp of the last accepted reading-nav gesture (debounce)
+  let imuSeen = 0 // count of raw IMU events seen from the host (diagnostics)
 
   function publishPhase(phase: LiturgyPhase): void {
     setPhase?.(phase)
@@ -357,7 +358,11 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     const bridge = state.bridge
     if (!bridge) return
     const settings = loadSettings()
-    if (settings.scrollMode !== 'head-gesture') return
+    log(`Head-gesture start: scrollMode=${settings.scrollMode}, deadzone=${settings.headTiltDeg}°`)
+    if (settings.scrollMode !== 'head-gesture') {
+      log(`(scroll mode is "${settings.scrollMode}", not head gestures — IMU stays off)`)
+      return
+    }
 
     const started = await startHeadGestures(bridge, (action) => {
       log(`Gesture: ${action}`)
@@ -614,6 +619,16 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     if (state.eventLoopRegistered) return
 
     bridge.onEvenHubEvent(async (event) => {
+      // Diagnostic: does the host stream IMU at all? Count raw IMU reports
+      // (eventType 8 or any imuData payload) BEFORE the head-gesture consume,
+      // so the log proves streaming even if extract()/active-state is wrong.
+      const looksImu = event?.sysEvent?.eventType === OsEventTypeList.IMU_DATA_REPORT || !!event?.sysEvent?.imuData
+      if (looksImu) {
+        imuSeen++
+        if (imuSeen === 1) log('✓ first raw IMU event from host')
+        else if (imuSeen % 50 === 0) log(`IMU stream alive (${imuSeen} samples)`)
+      }
+
       // IMU samples flow through this same handler — consume them for head
       // gestures before the normal tap/scroll/list handling.
       if (isHeadGesturesActive() && handleImuEvent(event)) return
