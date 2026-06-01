@@ -2,7 +2,7 @@ import './styles.css'
 import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk'
 import { createLiturgyController } from './liturgy-controller'
 import { withTimeout } from './shared/async'
-import { loadSettings, saveSettings, setBreviaryId } from './settings'
+import { loadSettings, saveSettings, setBreviaryId, exportSettings, importSettings } from './settings'
 import { showBreviaryPicker } from './breviary-picker'
 import { showReadingView } from './reading-view'
 import { showRemote } from './remote-view'
@@ -117,16 +117,18 @@ function resolveDark(): boolean {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
-const HOST_BREV_KEY = 'lit.breviaryId'
+const HOST_SETTINGS_KEY = 'lit.settings'
+const HOST_BREV_KEY = 'lit.breviaryId' // legacy key (pre-2.4.4), still read for back-compat
 
-// Recover the chosen breviary from host-backed storage (the packaged webview's
-// own localStorage can reset between launches). Validated against the registry.
-async function readHostBreviary(): Promise<string | null> {
+// Recover persisted state from host-backed storage (the packaged webview's own
+// localStorage can reset between launches). One bridge handshake, both keys.
+async function readHostState(): Promise<{ settings: string | null; brev: string | null }> {
   try {
     const bridge = await withTimeout(waitForEvenAppBridge(), 2000)
-    const v = await bridge.getLocalStorage(HOST_BREV_KEY)
-    return v && getBreviary(v).id === v ? v : null
-  } catch { return null }
+    const settings = await bridge.getLocalStorage(HOST_SETTINGS_KEY)
+    const brev = await bridge.getLocalStorage(HOST_BREV_KEY)
+    return { settings: settings || null, brev: (brev && getBreviary(brev).id === brev) ? brev : null }
+  } catch { return { settings: null, brev: null } }
 }
 
 async function bootstrap() {
@@ -141,8 +143,11 @@ async function bootstrap() {
   // a glasses launch opens YOUR breviary instead of defaulting to English.
   if (settings.breviaryId == null) {
     app!.innerHTML = `<div class="ilp" style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div class="ilp-hero-title" style="opacity:.65;font-size:22px">${esc(STRINGS.en.title)}</div></div>`
-    const hostId = await readHostBreviary()
-    if (hostId) { setBreviaryId(hostId); settings = loadSettings() }
+    const host = await readHostState()
+    // Restore ALL settings (scroll mode, dead zone, silence, breviary, …) — not
+    // just the breviary — so they survive on the packaged hub build.
+    if (host.settings) { importSettings(host.settings); settings = loadSettings() }
+    if (settings.breviaryId == null && host.brev) { setBreviaryId(host.brev); settings = loadSettings() }
   }
   renderApp(getBreviary(settings.breviaryId ?? DEFAULT_BREVIARY_ID))
   // True first run (no local + no host choice): offer the picker non-blockingly.
@@ -424,6 +429,10 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     onHoursLoaded(hours) { currentHours = hours; renderHourButtons(hours); updateVisibleVal(); updateDay() },
   })
 
+  // Mirror the full settings to host-backed storage so they survive on the
+  // packaged build (webview localStorage can reset between launches).
+  const mirrorSettings = () => { void controller.setHostStorage(HOST_SETTINGS_KEY, exportSettings()) }
+
   refreshPanel()
   renderHourToggles()
   updateVisibleVal()
@@ -476,29 +485,29 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   })
 
   $('set-scroll')?.addEventListener('change', (e) => {
-    const s = loadSettings(); s.scrollMode = (e.target as HTMLSelectElement).value as ScrollMode; saveSettings(s)
+    const s = loadSettings(); s.scrollMode = (e.target as HTMLSelectElement).value as ScrollMode; saveSettings(s); mirrorSettings()
     appendLog(`Scroll mode: ${s.scrollMode}`)
     const tr = $('tilt-row'); if (tr) tr.hidden = s.scrollMode !== 'head-gesture'
   })
   $('set-tilt')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)
-    if (val >= 3 && val <= 60) { const s = loadSettings(); s.headTiltDeg = val; saveSettings(s); appendLog(`Tilt dead zone: ${val}°`) }
+    if (val >= 3 && val <= 60) { const s = loadSettings(); s.headTiltDeg = val; saveSettings(s); mirrorSettings(); appendLog(`Tilt dead zone: ${val}°`) }
   })
   $('set-tap')?.addEventListener('change', (e) => {
-    const s = loadSettings(); s.tapToAdvance = (e.target as HTMLSelectElement).value === '1'; saveSettings(s)
+    const s = loadSettings(); s.tapToAdvance = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
     appendLog(`Tap to advance: ${s.tapToAdvance ? 'on' : 'off'}`)
   })
   $('set-seconds')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)
-    if (val >= 2 && val <= 60) { const s = loadSettings(); s.autoScrollSeconds = val; saveSettings(s); appendLog(`Auto-scroll: ${val}s`) }
+    if (val >= 2 && val <= 60) { const s = loadSettings(); s.autoScrollSeconds = val; saveSettings(s); mirrorSettings(); appendLog(`Auto-scroll: ${val}s`) }
   })
   $('set-silence')?.addEventListener('change', (e) => {
-    const s = loadSettings(); s.silenceEnabled = (e.target as HTMLSelectElement).value === '1'; saveSettings(s)
+    const s = loadSettings(); s.silenceEnabled = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
     appendLog(`Silence pauses: ${s.silenceEnabled ? 'on' : 'off'}`)
   })
   $('set-silence-seconds')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)
-    if (val >= 0 && val <= 120) { const s = loadSettings(); s.silenceSeconds = val; saveSettings(s); appendLog(`Silence: ${val}s`) }
+    if (val >= 0 && val <= 120) { const s = loadSettings(); s.silenceSeconds = val; saveSettings(s); mirrorSettings(); appendLog(`Silence: ${val}s`) }
   })
   $('visible-row')?.addEventListener('click', () => {
     const grid = $('hour-toggles'); if (grid) grid.hidden = !grid.hidden
@@ -507,7 +516,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     const boxes = $('hour-toggles')!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     const hidden: string[] = []
     boxes.forEach((cb) => { if (cb.dataset.hourKey && !cb.checked) hidden.push(cb.dataset.hourKey) })
-    const s = loadSettings(); s.hiddenHours = hidden; saveSettings(s)
+    const s = loadSettings(); s.hiddenHours = hidden; saveSettings(s); mirrorSettings()
     renderHourButtons(currentHours); updateVisibleVal()
   })
   $('adv-toggle')?.addEventListener('click', () => { const b = $('adv-body'); if (b) b.hidden = !b.hidden })
@@ -555,7 +564,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     await Promise.all([controller.loadHours(), controller.connect()])
     // Mirror the active breviary to host-backed storage so it's restored on the
     // next launch (the webview's own localStorage can reset between launches).
-    void controller.setHostStorage(HOST_BREV_KEY, breviary.id)
+    mirrorSettings()
     await controller.renderHourList().catch((err) => appendLog(`Render error: ${err}`))
     void runPrefetch()
   }

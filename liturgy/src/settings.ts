@@ -75,6 +75,19 @@ export function saveSettings(settings: LiturgySettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
 }
 
+// For host-backed persistence (the packaged webview's localStorage doesn't
+// survive cold launches). exportSettings → mirror to bridge.setLocalStorage;
+// importSettings ← restore on launch (validated on next loadSettings()).
+export function exportSettings(): string {
+  return JSON.stringify(loadSettings())
+}
+export function importSettings(json: string): void {
+  try {
+    const o = JSON.parse(json)
+    if (o && typeof o === 'object') localStorage.setItem(STORAGE_KEY, JSON.stringify(o))
+  } catch { /* ignore malformed */ }
+}
+
 export function updateSetting<K extends keyof LiturgySettings>(key: K, value: LiturgySettings[K]): LiturgySettings {
   const settings = loadSettings()
   settings[key] = value
