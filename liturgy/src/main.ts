@@ -488,6 +488,7 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
     const s = loadSettings(); s.scrollMode = (e.target as HTMLSelectElement).value as ScrollMode; saveSettings(s); mirrorSettings()
     appendLog(`Scroll mode: ${s.scrollMode}`)
     const tr = $('tilt-row'); if (tr) tr.hidden = s.scrollMode !== 'head-gesture'
+    void controller.applyScrollMode() // take effect immediately, no need to re-open the hour
   })
   $('set-tilt')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)

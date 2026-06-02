@@ -356,7 +356,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
   async function startHeadGestureMode(): Promise<void> {
     const bridge = state.bridge
-    if (!bridge) return
+    if (!bridge) { log('(head gestures: bridge not ready yet — will retry on resume/toggle)'); return }
+    if (isHeadGesturesActive()) return // already running — don't re-init / re-enable IMU
     const settings = loadSettings()
     log(`Head-gesture start: scrollMode=${settings.scrollMode}, deadzone=${settings.headTiltDeg}°`)
     if (settings.scrollMode !== 'head-gesture') {
@@ -393,6 +394,19 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
   async function stopHeadGestureMode(): Promise<void> {
     if (state.bridge) await stopHeadGestures(state.bridge)
+  }
+
+  // Reconcile live hardware (IMU / auto-advance timer) with the CURRENT scroll
+  // mode while an hour is open. Idempotent — safe to call after a settings
+  // change, on foreground-resume, or once the bridge attaches. This is what
+  // makes a saved "head gestures" default take effect without re-opening the
+  // hour, and makes flipping the Scroll-mode setting apply immediately.
+  async function applyScrollMode(): Promise<void> {
+    if (state.view !== 'reading') return
+    const mode = loadSettings().scrollMode
+    if (mode === 'head-gesture') await startHeadGestureMode()
+    else if (isHeadGesturesActive()) await stopHeadGestureMode()
+    if (mode === 'auto') startAutoAdvance(); else pauseAuto()
   }
 
   // ── Reading layout ──
@@ -662,6 +676,10 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       log(`evt[${field}] src=${srcName} raw=${JSON.stringify(rawEventType)} → ${eventType == null ? '—' : (nm[eventType] ?? eventType)} idx=${incomingIndex} view=${state.view}`)
 
       if (state.view === 'loading') return
+
+      // App resumed from background → re-apply scroll mode so head-gesture IMU
+      // (which the host stops while backgrounded) comes back on automatically.
+      if (eventType === OsEventTypeList.FOREGROUND_ENTER_EVENT) { void applyScrollMode(); return }
 
       if (state.view === 'hours') {
         await onHourListEvent(eventType, incomingIndex)
@@ -1020,6 +1038,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     connect,
     loadHours,
     selectHour,
+    applyScrollMode,
     scrollUp,
     scrollDown,
     pauseAuto,
