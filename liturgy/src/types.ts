@@ -55,6 +55,9 @@ export type LiturgySettings = {
   silenceSeconds: number
   headTiltDeg: number        // head-tilt dead zone (degrees) before paging kicks in
   tapToAdvance: boolean
+  templeNav: boolean         // left temple = previous page, right temple = next (SDK 0.0.14 eventSource)
+  toneBrightness: boolean    // per-line textColor: spoken text bright, rubrics dim
+  solarHours: boolean        // anchor the little hours to sunrise/sunset here, not the clock
   hiddenHours: string[]
   fontSize: number
   fontWeight: number

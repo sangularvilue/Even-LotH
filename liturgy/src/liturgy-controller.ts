@@ -1,5 +1,6 @@
 import {
   CreateStartUpPageContainer,
+  EventSourceType,
   ListContainerProperty,
   ListItemContainerProperty,
   OsEventTypeList,
@@ -8,14 +9,19 @@ import {
   TextContainerUpgrade,
   waitForEvenAppBridge,
   type EvenAppBridge,
+  type LaunchSource,
 } from '@evenrealities/even_hub_sdk'
 import { withTimeout } from './shared/async'
 import { getRawEventType, normalizeEventType } from './shared/even-events'
 import { fetchHours, fetchHour } from './api-client'
-import { loadSettings, getBreviaryId } from './settings'
-import { getBreviary } from './breviaries'
-import { startHeadGestures, stopHeadGestures, handleImuEvent, isHeadGesturesActive } from './head-gestures'
-import type { HourInfo, LiturgyPhase, PrayerSection, LiturgicalDay } from './types'
+import { loadSettings, saveSettings, getBreviaryId } from './settings'
+import { getBreviary, localeFor } from './breviaries'
+import { startHeadGestures, stopHeadGestures, handleImuEvent, isHeadGesturesActive, recenterHeadGestures } from './head-gestures'
+import { toneLevel, toneScaffold } from './tone'
+import { paginateSections, type PageLine } from './paginate'
+import { menuFor, menuActionFrom, MenuAction, type MenuActionId } from './glasses-menu'
+import { getCoords, solarDay, suggestHourIndex, clockLabel, type Coords, type SolarDay } from './geo'
+import type { HourInfo, LiturgyPhase, PrayerSection, LiturgicalDay, ScrollMode } from './types'
 
 type ControllerDeps = {
   setPhase?: (phase: LiturgyPhase) => void
@@ -35,20 +41,35 @@ type ControllerState = {
   date: string
   hours: HourInfo[]
   selectedHourIndex: number
-  pages: string[]
+  pages: string[]           // plain-text mirror of pageLines, for the companion panel
+  pageLines: PageLine[][]   // what the glasses actually render, one entry per line slot
   sectionLabels: string[]   // section label for each page (parallel to pages)
   pageIndex: number
   autoPaused: boolean       // auto-advance paused by a manual interaction
   day?: LiturgicalDay       // liturgical day from the breviary's own calendar
+  coords: Coords | null     // phone location, when granted
+  solar: SolarDay | null    // today's sunrise / solar noon / sunset here
+  suggestedIndex: number    // index into visibleHours() of the office due now
+  launchSource: LaunchSource | null
+  autoOpened: boolean       // guard: only follow a glasses-menu launch once
 }
 
 const DISPLAY_WIDTH = 576
-const TEXT_HEIGHT = 256
-const BAR_HEIGHT = 30
 
-// Conservative page sizing — 7 lines of ~50 chars fits safely
-const CHARS_PER_LINE = 50
-const LINES_PER_PAGE = 7
+// The firmware font is a fixed 27px line box (see @evenrealities/pretext), and a
+// page may hold at most 8 non-image containers. Seven line containers plus the
+// footer spends that budget exactly — and buying per-line containers is what
+// makes per-line brightness possible, since `textColor` applies to a whole
+// container rather than to runs of text inside one.
+const LINE_HEIGHT = 27
+const LINE_SLOTS = 7
+const TEXT_X = 6
+const TEXT_W = DISPLAY_WIDTH - 2 * TEXT_X
+const FOOTER_Y = 252
+const FOOTER_ID = 8
+const FOOTER_NAME = 'lit-footer'
+
+const LINES_PER_PAGE = LINE_SLOTS
 const AUTO_MIN_DWELL = 3 // seconds — floor so 1-line pages don't linger
 const NAV_DEBOUNCE_MS = 250 // ignore duplicate reading-nav gestures within this window
 
@@ -61,247 +82,15 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v))
 }
 
-function wordWrap(text: string, maxWidth: number): string[] {
-  if (text.length <= maxWidth) return [text]
-  const result: string[] = []
-  const words = text.split(' ')
-  let current = ''
-  for (const word of words) {
-    const candidate = current ? `${current} ${word}` : word
-    if (candidate.length > maxWidth && current) {
-      result.push(current)
-      current = word
-    } else {
-      current = candidate
-    }
-  }
-  if (current) result.push(current)
-  return result.length > 0 ? result : [text]
-}
-
-// ── Junk lines to strip from intro ──
-const INTRO_JUNK = [
-  /general instruction/i,
-  /please pray with us/i,
-  /joining with us in saying/i,
-  /indicated in this/i,
-  /consider an examination/i,
-  /best make use of our time/i,
-  /\[highlight\]/i,
-  /\[\.?\]$/,
-  /^\[Night Prayer/i,
-  /^\[Morning Prayer/i,
-  /^\[Evening Prayer/i,
-  /^\[Office of Readings/i,
-  /^\[Midmorning Prayer/i,
-  /^\[Midday Prayer/i,
-  /^\[Midafternoon Prayer/i,
-  /^\[Invitatory/i,
-  /Ribbon Placement/i,
-  /Liturgy of the Hours Vol/i,
-  /Christian Prayer:/i,
-  /^Ordinary:\s*\d/i,
-  /^Proper of Seasons:\s*\d/i,
-  /^Psalter:/i,
-  /^Page \d+/i,
-  /^Antiphon:\s*\d/i,
-  /^Psalm:\s*\d/i,
-  /^\{r\}Sacred Silence/i,
-  /^Sacred Silence/i,
-  /indicated by a bell/i,
-  /full resonance of the voice/i,
-  /unite our personal prayer/i,
-]
-
-function isIntroJunk(line: string): boolean {
-  return INTRO_JUNK.some(re => re.test(line))
-}
-
 /**
- * Convert semantic markers to plain text and reformat psalm/canticle headers.
+ * Wrap to a pixel width using the real firmware metrics.
  *
- * Psalm headers become:
- *   Psalm 16 - God is my portion, my inheritance.
- *   (The Father raised up Jesus...) - Acts 2:24
- *
- * Returns { text, isNewSection } where isNewSection forces a page break.
+ * The G2 font is proportional, so any single character budget is wrong in both
+ * directions: 62 lowercase characters fit in the 564px line, but only 35
+ * capitals do. Counting characters therefore either wasted a quarter of every
+ * prose line or silently overflowed an all-caps heading into a clipped second
+ * line. @evenrealities/pretext measures the same advance widths the glasses use.
  */
-function formatLines(rawLines: string[]): { text: string; pageBreak: boolean }[] {
-  const result: { text: string; pageBreak: boolean }[] = []
-  let i = 0
-
-  while (i < rawLines.length) {
-    let line = rawLines[i]!
-
-    // Strip intro junk
-    if (isIntroJunk(line)) { i++; continue }
-
-    // Detect psalm/canticle/scripture title patterns:
-    //   {r}Psalm 16\nsubtitle{/r}      (psalm)
-    //   {r}Luke 2:29-32{/r}            (canticle scripture ref)
-    //   {r}Luke 1:68 79\nsubtitle{/r}  (canticle scripture ref + subtitle)
-    //   {r}Canticle – Isaiah 45{/r}    (canticle with source)
-    //   Hebrews 2:9-10                 (bare reading reference)
-    const TITLE_PATTERN = /^(?:Psalm|Canticle|Luke|Isaiah|Jeremiah|Daniel|Exodus|Deuteronomy|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|See\s)/i
-    const SCRIPTURE_REF = /^[1-3]?\s?[A-Z][a-z]+\s+\d+[:\d\s,\-a-z]*$/
-
-    // Pattern A: complete on one line with {r}
-    const titleMatchA = line.match(/^\{r\}((?:Psalm|Canticle|Luke|Isaiah|Daniel|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|Jeremiah|Deuteronomy|Exodus|See\s)[^{]*)\{\/r\}$/i)
-    // Pattern B: opening {r} with title, no closing (continues on next line)
-    const titleMatchB = line.match(/^\{r\}((?:Psalm|Canticle|Luke|Isaiah|Daniel|Revelation|Colossians|Philippians|Ephesians|Romans|Hebrews|1 Peter|1 Corinthians|1 Kings|1 Thessalonians|James|Joel|Nehemiah|Jeremiah|Deuteronomy|Exodus|See\s)[^{]*)$/i)
-    // Pattern C: bare scripture reference at start of reading (no {r} markers)
-    const titleMatchC = !line.includes('{') && SCRIPTURE_REF.test(line.trim()) ? line.trim() : null
-
-    if (titleMatchA || titleMatchB || titleMatchC) {
-      let title: string
-      let subtitle = ''
-
-      if (titleMatchC) {
-        // Bare scripture reference (reading)
-        title = titleMatchC
-      } else if (titleMatchA) {
-        const parts = titleMatchA[1].trim().split('\n').map(p => p.trim()).filter(Boolean)
-        title = parts[0]!
-        subtitle = parts.slice(1).join(' ')
-      } else {
-        // Pattern B: title on this line, subtitle on next line ending with {/r}
-        title = titleMatchB![1].trim()
-        if (i + 1 < rawLines.length) {
-          const nextLine = rawLines[i + 1]!
-          const closingMatch = nextLine.match(/^(.+?)\{\/r\}$/)
-          if (closingMatch) {
-            subtitle = closingMatch[1].trim()
-            i++
-          }
-        }
-      }
-
-      // Check if next line is also a red subtitle (e.g. {i}{r}The soul rejoices{/r}{/i})
-      if (!subtitle && i + 1 < rawLines.length) {
-        const nextLine = rawLines[i + 1]!
-        // Match {r}subtitle{/r} or {i}{r}subtitle{/r}{/i} or {i}subtitle{/i}
-        const subMatch = nextLine.match(/^\{[ri]\}(?:\{[ri]\})?(.+?)(?:\{\/[ri]\})?\{\/[ri]\}$/)
-        if (subMatch && !/^(HYMN|PSALMODY|READING|RESPONSORY|INTERCESSIONS|CONCLUDING|DISMISSAL|CANTICLE OF|Sacred Silence)/i.test(subMatch[1])) {
-          subtitle = subMatch[1].trim()
-          i++
-        }
-      }
-
-      let headerLine = subtitle ? `${title} - ${subtitle}` : title
-
-      // Check if next line is a cross-reference
-      let crossRef = ''
-      if (i + 1 < rawLines.length) {
-        const refMatch = rawLines[i + 1]!.match(/^\{i\}(.+?)\{\/i\}\s*(\([^)]+\))?\.?$/)
-        if (refMatch) {
-          crossRef = `(${refMatch[1]}) - ${refMatch[2] || ''}`.replace(/ - $/, '')
-          i++
-        }
-      }
-
-      result.push({ text: headerLine, pageBreak: true })
-      if (crossRef) result.push({ text: crossRef, pageBreak: false })
-      result.push({ text: '', pageBreak: false })
-      i++
-      continue
-    }
-
-    // Detect section headings: {r}READING{/r}, {r}HYMN{/r} etc.
-    const sectionMatch = line.match(/^\{r\}([A-Z][A-Z\s\d:,\-]+)\{\/r\}$/)
-    if (sectionMatch) {
-      const heading = sectionMatch[1].trim()
-      // READING often has a reference on the same line or next
-      result.push({ text: `== ${heading} ==`, pageBreak: true })
-      i++
-      continue
-    }
-
-    // Format remaining markers
-    let formatted = line
-      // Bracketed instructions like [Psalm-prayer]
-      .replace(/\{r\}\[([^\]]+)\]\{\/r\}/g, '[$1]')
-      // Other rubrics -> brackets
-      .replace(/\{r\}(.+?)\{\/r\}/g, '[$1]')
-      // Response marker
-      .replace(/\{v\}\u2014\{\/v\}\s*/g, 'R/ ')
-      // Antiphon labels
-      .replace(/\{ant\}(Ant\.?\s*\d*)\{\/ant\}\s*/g, '* $1 ')
-      // Italic cross-references -> parens
-      .replace(/\{i\}(.+?)\{\/i\}/g, '($1)')
-      // Title blocks
-      .replace(/\{title\}(.+?)\{\/title\}/g, '$1')
-      // Clean remaining markers
-      .replace(/\{\/?\w+\}/g, '')
-
-    // Skip empty after cleanup
-    if (!formatted.trim()) { i++; continue }
-
-    // Antiphons get spacing
-    const isAntiphon = formatted.startsWith('* Ant')
-    // Confiteor / penitential rite get a break before
-    const isPrayerStart = /^(I confess to almighty God|Lord Jesus|God, come to my assistance)/.test(formatted)
-
-    if (isAntiphon || isPrayerStart) {
-      result.push({ text: '', pageBreak: false })
-    }
-
-    result.push({ text: formatted, pageBreak: false })
-
-    if (isAntiphon) {
-      result.push({ text: '', pageBreak: false })
-    }
-
-    i++
-  }
-
-  return result
-}
-
-// Returns the paginated page texts plus a parallel array of the section label
-// each page belongs to (used by auto-advance to place silence at section ends).
-function paginateSections(sections: PrayerSection[]): { pages: string[]; sectionLabels: string[] } {
-  // Build all formatted lines with page break markers, tagged by section.
-  const entries: { text: string; pageBreak: boolean; section: string }[] = []
-
-  for (const section of sections) {
-    const label = section.label || ''
-    // For canticle sections, the label (e.g. "CANTICLE OF SIMEON") becomes
-    // part of the title header — the scripture ref in the body takes over
-    const isCanticleSection = /^canticle of/i.test(label)
-    if (label && !isCanticleSection) {
-      entries.push({ text: '', pageBreak: false, section: label })
-      entries.push({ text: `== ${label} ==`, pageBreak: true, section: label })
-      entries.push({ text: '', pageBreak: false, section: label })
-    }
-    if (isCanticleSection) {
-      entries.push({ text: label, pageBreak: true, section: label })
-    }
-
-    const rawLines = section.text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
-    for (const e of formatLines(rawLines)) entries.push({ ...e, section: label })
-  }
-
-  // Paginate — respect page breaks and LINES_PER_PAGE limit
-  const pages: string[] = []
-  const sectionLabels: string[] = []
-  let currentPage: string[] = []
-  let pageSection = ''
-  const flush = () => { pages.push(currentPage.join('\n')); sectionLabels.push(pageSection); currentPage = [] }
-
-  for (const entry of entries) {
-    if (entry.pageBreak && currentPage.some(l => l.trim().length > 0)) flush()
-    const wrapped = entry.text === '' ? [''] : wordWrap(entry.text, CHARS_PER_LINE)
-    for (const wline of wrapped) {
-      if (currentPage.length >= LINES_PER_PAGE && currentPage.some(l => l.trim().length > 0)) flush()
-      if (currentPage.length === 0) pageSection = entry.section
-      currentPage.push(wline)
-    }
-  }
-  if (currentPage.some(l => l.trim().length > 0)) flush()
-
-  return pages.length > 0 ? { pages, sectionLabels } : { pages: ['(empty)'], sectionLabels: [''] }
-}
-
 export function createLiturgyController({ setPhase, log, onReadingChanged, onHoursLoaded }: ControllerDeps) {
   const state: ControllerState = {
     bridge: null,
@@ -313,9 +102,15 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     hours: [],
     selectedHourIndex: 0,
     pages: [],
+    pageLines: [],
     sectionLabels: [],
     pageIndex: 0,
     autoPaused: false,
+    coords: null,
+    solar: null,
+    suggestedIndex: 0,
+    launchSource: null,
+    autoOpened: false,
   }
 
   let currentLayout: 'hours' | 'reading' | 'loading' | null = null
@@ -323,6 +118,10 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   let autoTimerId: number | null = null
   let lastReadingNav = 0 // timestamp of the last accepted reading-nav gesture (debounce)
   let imuSeen = 0 // count of raw IMU events seen from the host (diagnostics)
+  // What the glasses are currently showing, per line slot — so a page turn can
+  // push only the slots that actually changed.
+  let renderedLines: PageLine[] = []
+  let renderedBar = ''
 
   function publishPhase(phase: LiturgyPhase): void {
     setPhase?.(phase)
@@ -344,7 +143,9 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   function progressBar(): string {
-    const barLen = 30
+    // Box-drawing glyphs are 20px wide, so 28 is the most that fits the 564px
+    // line — the old 30 measured 600px and wrapped into a clipped second line.
+    const barLen = 26
     const progress = state.pages.length > 1
       ? (state.pageIndex + 1) / state.pages.length
       : 1
@@ -410,6 +211,70 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
   }
 
   // ── Reading layout ──
+  //
+  // One container per line, stacked on the firmware's fixed 27px line box, plus
+  // the footer: seven plus one spends the page's 8-container budget exactly.
+  // Paying for per-line containers is what buys per-line brightness, because
+  // `textColor` applies to a whole container and not to runs of text inside one.
+  //
+  // The geometry never changes between pages, so a page turn is still a set of
+  // textContainerUpgrade calls (flicker-free) rather than a rebuild.
+
+  function lineSlotId(i: number): number { return i + 1 }
+  function lineSlotName(i: number): string { return `lit-line-${i}` }
+
+  // A blank slot is sent as a single space rather than an empty string: an empty
+  // payload is not reliably treated as "clear this container", and a stale line
+  // left behind on a page turn is much worse than a space.
+  const BLANK = ' '
+
+  function slotLines(): PageLine[] {
+    const page = state.pageLines[state.pageIndex] ?? []
+    const tonesOn = loadSettings().toneBrightness
+    const out: PageLine[] = []
+    for (let i = 0; i < LINE_SLOTS; i++) {
+      const line = page[i]
+      if (!line || !line.text.trim()) { out.push({ text: BLANK, tone: 'body' }); continue }
+      // Tones off → put the old ASCII scaffolding back and render flat, so an
+      // Even App that predates textColor still shows a hierarchy.
+      out.push(tonesOn ? line : { text: toneScaffold(line.text, line.tone), tone: 'body' })
+    }
+    return out
+  }
+
+  function readingContainers(lines: PageLine[], bar: string): TextContainerProperty[] {
+    const containers = lines.map((line, i) => new TextContainerProperty({
+      containerID: lineSlotId(i),
+      containerName: lineSlotName(i),
+      content: line.text,
+      xPosition: TEXT_X,
+      yPosition: i * LINE_HEIGHT,
+      width: TEXT_W,
+      height: LINE_HEIGHT,
+      borderWidth: 0,
+      paddingLength: 0,
+      textColor: toneLevel(line.tone),
+      isEventCapture: 0,
+    }))
+
+    containers.push(new TextContainerProperty({
+      containerID: FOOTER_ID,
+      containerName: FOOTER_NAME,
+      content: bar,
+      xPosition: TEXT_X,
+      yPosition: FOOTER_Y,
+      width: TEXT_W,
+      height: LINE_HEIGHT,
+      borderWidth: 0,
+      paddingLength: 0,
+      textColor: toneLevel('faint'),
+      // Exactly one container must capture events, and the footer is the only
+      // one that is never blank — so it is the safe place to put it.
+      isEventCapture: 1,
+    }))
+
+    return containers
+  }
 
   async function setupReadingLayout(): Promise<void> {
     const bridge = state.bridge
@@ -417,37 +282,14 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
     stopSpinner()
 
-    const page = state.pages[state.pageIndex] ?? ''
-
-    const textContainer = new TextContainerProperty({
-      containerID: 1,
-      containerName: 'lit-reading',
-      content: page,
-      xPosition: 0,
-      yPosition: 0,
-      width: DISPLAY_WIDTH,
-      height: TEXT_HEIGHT,
-      borderWidth: 0,
-      paddingLength: 6,
-      isEventCapture: 1,
-    })
-
-    const footerContainer = new TextContainerProperty({
-      containerID: 2,
-      containerName: 'lit-footer',
-      content: progressBar(),
-      xPosition: 0,
-      yPosition: TEXT_HEIGHT,
-      width: DISPLAY_WIDTH,
-      height: BAR_HEIGHT,
-      borderWidth: 0,
-      paddingLength: 0,
-      isEventCapture: 0,
-    })
+    const lines = slotLines()
+    const bar = progressBar()
+    const containers = readingContainers(lines, bar)
 
     const config = {
-      containerTotalNum: 2,
-      textObject: [textContainer, footerContainer],
+      containerTotalNum: containers.length,
+      textObject: containers,
+      menuObject: menuFor('reading', localeFor(getBreviaryId())),
     }
 
     try {
@@ -458,6 +300,8 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         await bridge.rebuildPageContainer(new RebuildPageContainer(config))
       }
       currentLayout = 'reading'
+      renderedLines = lines
+      renderedBar = bar
     } catch (err) {
       log(`setupReadingLayout error: ${err}`)
     }
@@ -467,23 +311,37 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     const bridge = state.bridge
     if (!bridge || currentLayout !== 'reading') return
 
-    const content = state.pages[state.pageIndex] ?? ''
+    const lines = slotLines()
     const bar = progressBar()
     try {
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
-        containerID: 1,
-        containerName: 'lit-reading',
-        contentOffset: 0,
-        contentLength: content.length,
-        content,
-      }))
-      await bridge.textContainerUpgrade(new TextContainerUpgrade({
-        containerID: 2,
-        containerName: 'lit-footer',
-        contentOffset: 0,
-        contentLength: bar.length,
-        content: bar,
-      }))
+      // Push only the slots whose text or tone moved. Most page turns change
+      // five or six of the seven, and trailing blanks usually stay blank, so the
+      // BLE cost stays close to the old single-container update.
+      for (let i = 0; i < LINE_SLOTS; i++) {
+        const next = lines[i]!
+        const prev = renderedLines[i]
+        if (prev && prev.text === next.text && prev.tone === next.tone) continue
+        await bridge.textContainerUpgrade(new TextContainerUpgrade({
+          containerID: lineSlotId(i),
+          containerName: lineSlotName(i),
+          contentOffset: 0,
+          contentLength: next.text.length,
+          content: next.text,
+          textColor: toneLevel(next.tone),
+        }))
+        renderedLines[i] = next
+      }
+      if (bar !== renderedBar) {
+        await bridge.textContainerUpgrade(new TextContainerUpgrade({
+          containerID: FOOTER_ID,
+          containerName: FOOTER_NAME,
+          contentOffset: 0,
+          contentLength: bar.length,
+          content: bar,
+          textColor: toneLevel('faint'),
+        }))
+        renderedBar = bar
+      }
     } catch (err) {
       log(`updatePageText error: ${err}`)
     }
@@ -538,6 +396,9 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       containerTotalNum: 2,
       textObject: [spinnerText],
       listObject: [captureList],
+      // Carry the menu through loading too — a fetch that hangs should still be
+      // escapable with a long press.
+      menuObject: menuFor('hours', localeFor(getBreviaryId())),
     }
 
     if (!state.startupRendered) {
@@ -585,9 +446,15 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       xPosition: 8,
       yPosition: 0,
       width: 560,
-      height: 32,
+      height: LINE_HEIGHT,
+      // Chrome, not content: let the hour names read first.
+      textColor: toneLevel('heading'),
       isEventCapture: 0,
     })
+
+    // The firmware owns list highlighting and offers no way to preselect an
+    // item, so the office that is due is marked in its own label instead.
+    const marked = hours.map((h, i) => (i === state.suggestedIndex ? `\u25b8 ${h.name}` : h.name))
 
     const hourList = new ListContainerProperty({
       containerID: 2,
@@ -596,7 +463,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         itemCount: hours.length,
         itemWidth: 556,
         isItemSelectBorderEn: 1,
-        itemName: hours.map(h => h.name),
+        itemName: marked,
       }),
       isEventCapture: 1,
       xPosition: 8,
@@ -609,6 +476,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       containerTotalNum: 2,
       textObject: [titleText],
       listObject: [hourList],
+      menuObject: menuFor('hours', localeFor(getBreviaryId())),
     }
 
     try {
@@ -647,6 +515,16 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       // gestures before the normal tap/scroll/list handling.
       if (isHeadGesturesActive() && handleImuEvent(event)) return
 
+      // A long-press menu pick arrives on this same stream. Handle it ahead of
+      // everything else, including the loading guard below, so a hung fetch can
+      // still be escaped.
+      const menuAction = menuActionFrom(event)
+      if (menuAction !== null) {
+        log(`Menu: ${menuAction}`)
+        await onMenuAction(menuAction)
+        return
+      }
+
       const rawEventType = getRawEventType(event)
       let eventType = normalizeEventType(rawEventType, OsEventTypeList)
 
@@ -669,10 +547,13 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
 
       // ── Input diagnostics: log every gesture (ring vs touchpad) so a
       // double-advance / duplicate-event bug shows itself in the Event Log. ──
-      const src = event?.sysEvent?.eventSource
-      const srcName = src === 2 ? 'ring' : src === 1 ? 'glassesR' : src === 3 ? 'glassesL' : (src == null ? '—' : `src${src}`)
+      const src: number | undefined = event?.sysEvent?.eventSource
+      const srcName = src === EventSourceType.TOUCH_EVENT_FROM_RING ? 'ring'
+        : src === EventSourceType.TOUCH_EVENT_FROM_GLASSES_R ? 'templeR'
+        : src === EventSourceType.TOUCH_EVENT_FROM_GLASSES_L ? 'templeL'
+        : (src == null ? '—' : `src${src}`)
       const field = event.listEvent ? 'list' : event.textEvent ? 'text' : event.sysEvent ? 'sys' : '?'
-      const nm: Record<number, string> = { 0: 'CLICK', 1: 'SCROLL_TOP', 2: 'SCROLL_BOTTOM', 3: 'DOUBLE', 4: 'FG_ENTER', 5: 'FG_EXIT', 6: 'ABN_EXIT', 7: 'SYS_EXIT' }
+      const nm: Record<number, string> = { 0: 'CLICK', 1: 'SCROLL_TOP', 2: 'SCROLL_BOTTOM', 3: 'DOUBLE', 4: 'FG_ENTER', 5: 'FG_EXIT', 6: 'ABN_EXIT', 7: 'SYS_EXIT', 8: 'IMU', 9: 'LONG_PRESS', 10: 'LONG_RELEASE' }
       log(`evt[${field}] src=${srcName} raw=${JSON.stringify(rawEventType)} → ${eventType == null ? '—' : (nm[eventType] ?? eventType)} idx=${incomingIndex} view=${state.view}`)
 
       if (state.view === 'loading') return
@@ -684,7 +565,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       if (state.view === 'hours') {
         await onHourListEvent(eventType, incomingIndex)
       } else if (state.view === 'reading') {
-        await onReadingEvent(eventType)
+        await onReadingEvent(eventType, src)
       }
     })
 
@@ -720,52 +601,123 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       const idx = (incomingIndex >= 0 && incomingIndex < hours.length)
         ? incomingIndex
         : state.selectedHourIndex
-      const hour = hours[idx]
-      if (!hour) return
-
-      state.selectedHourIndex = idx
-      state.view = 'loading'
-      publishPhase('loading')
-
-      await renderLoadingPage(hour.name)
-      log(`Loading ${hour.name}...`)
-
-      try {
-        const content = await fetchHour(hour.slug, hour.date || state.date)
-
-        stopSpinner()
-
-        if (content.day) state.day = content.day
-        ;({ pages: state.pages, sectionLabels: state.sectionLabels } = paginateSections(content.sections))
-        state.pageIndex = 0
-        state.view = 'reading'
-        publishPhase('reading')
-        log(`${hour.name}: ${state.pages.length} pages`)
-
-        await setupReadingLayout()
-        void startHeadGestureMode()
-        startAutoAdvance()
-      } catch (err) {
-        stopSpinner()
-        log(`Error: ${err}`)
-        state.view = 'hours'
-        publishPhase('error')
-        await renderHourListPage()
-      }
+      await openHourAtIndex(idx)
     }
   }
 
-  async function onReadingEvent(eventType: number | undefined): Promise<void> {
+  /** Load and open one office from the visible-hours list, by index. */
+  async function openHourAtIndex(idx: number): Promise<void> {
+    const hours = visibleHours()
+    const hour = hours[idx]
+    if (!hour) return
+
+    state.selectedHourIndex = idx
+    state.view = 'loading'
+    publishPhase('loading')
+
+    await renderLoadingPage(hour.name)
+    log(`Loading ${hour.name}...`)
+
+    try {
+      const content = await fetchHour(hour.slug, hour.date || state.date)
+
+      stopSpinner()
+
+      if (content.day) state.day = content.day
+      ;({ pages: state.pages, pageLines: state.pageLines, sectionLabels: state.sectionLabels } = paginateSections(content.sections, TEXT_W, LINES_PER_PAGE))
+      state.pageIndex = 0
+      state.view = 'reading'
+      publishPhase('reading')
+      log(`${hour.name}: ${state.pages.length} pages`)
+
+      await setupReadingLayout()
+      void startHeadGestureMode()
+      startAutoAdvance()
+    } catch (err) {
+      stopSpinner()
+      log(`Error: ${err}`)
+      state.view = 'hours'
+      publishPhase('error')
+      await renderHourListPage()
+    }
+  }
+
+  /** Leave the office and go back to the list of hours. */
+  async function backToHourList(): Promise<void> {
+    pauseAuto()
+    void stopHeadGestureMode()
+    state.pages = []
+    state.pageLines = []
+    state.pageIndex = 0
+    state.view = 'hours'
+    onReadingChanged?.('', '')
+    publishPhase(state.mode === 'mock' ? 'mock' : 'connected')
+    log('Back to hour list')
+    await renderHourListPage()
+  }
+
+  function cycleScrollMode(): ScrollMode {
+    const order: ScrollMode[] = ['manual', 'auto', 'head-gesture']
+    const settings = loadSettings()
+    const next = order[(order.indexOf(settings.scrollMode) + 1) % order.length]!
+    settings.scrollMode = next
+    saveSettings(settings)
+    return next
+  }
+
+  // ── Long-press menu ──
+  // Every item is a verb that completes on its own: the overlay is
+  // fire-and-forget, so there is nothing to acknowledge and no menu state to
+  // keep. This is what got navigation off the touchpad — tap and swipe now mean
+  // only "turn the page".
+  async function onMenuAction(action: MenuActionId): Promise<void> {
+    const hours = visibleHours()
+
+    switch (action) {
+      case MenuAction.NextHour:
+      case MenuAction.PrevHour: {
+        if (hours.length === 0) return
+        const delta = action === MenuAction.NextHour ? 1 : -1
+        const idx = clamp(state.selectedHourIndex + delta, 0, hours.length - 1)
+        if (idx === state.selectedHourIndex) {
+          log(delta > 0 ? 'Already at the last hour' : 'Already at the first hour')
+          return
+        }
+        await openHourAtIndex(idx)
+        return
+      }
+
+      case MenuAction.ScrollMode: {
+        const mode = cycleScrollMode()
+        log(`Scroll mode: ${mode}`)
+        await applyScrollMode()
+        return
+      }
+
+      case MenuAction.Recentre:
+        recenterHeadGestures()
+        return
+
+      case MenuAction.HourList:
+        if (state.view === 'reading') await backToHourList()
+        return
+
+      case MenuAction.OpenCurrentHour:
+        await openHourAtIndex(clamp(state.suggestedIndex, 0, Math.max(0, hours.length - 1)))
+        return
+
+      case MenuAction.Exit:
+        if (state.bridge) {
+          try { await state.bridge.shutDownPageContainer(1) } catch (err) { log(`shutDown failed: ${err}`) }
+        }
+        return
+    }
+  }
+
+  async function onReadingEvent(eventType: number | undefined, source?: number): Promise<void> {
     pauseAuto() // any on-glasses interaction pauses hands-free advance
     if (eventType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
-      void stopHeadGestureMode()
-      state.pages = []
-      state.pageIndex = 0
-      state.view = 'hours'
-      onReadingChanged?.('', '')
-      publishPhase(state.mode === 'mock' ? 'mock' : 'connected')
-      log('Back to hour list')
-      await renderHourListPage()
+      await backToHourList()
       return
     }
 
@@ -781,8 +733,23 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       lastReadingNav = now
     }
 
-    // Tap advances to next page
+    // Tap turns the page. SDK 0.0.14 tells us WHICH temple was tapped, so the
+    // gesture is spatial rather than modal: left goes back, right goes forward.
+    // The ring (and any host that does not report a source) keeps the old
+    // behaviour of advancing.
     if (eventType === OsEventTypeList.CLICK_EVENT) {
+      const back = loadSettings().templeNav
+        && source === EventSourceType.TOUCH_EVENT_FROM_GLASSES_L
+      if (back) {
+        if (state.pageIndex > 0) {
+          state.pageIndex--
+          await updatePageText()
+          onReadingChanged?.('', progressStr())
+        } else {
+          log('At the first page')
+        }
+        return
+      }
       if (state.pageIndex < state.pages.length - 1) {
         state.pageIndex++
         await updatePageText()
@@ -821,16 +788,55 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       }
       state.mode = 'bridge'
       registerEventLoop(state.bridge)
+      registerLaunchSource(state.bridge)
       publishPhase('connected')
       log('Connected to glasses')
 
       if (state.hours.length > 0) {
         await renderHourListPage()
+        void maybeFollowLaunchSource()
       }
     } catch {
       state.mode = 'mock'
       publishPhase('mock')
       log('Bridge not found, mock mode')
+    }
+  }
+
+  // ── Launch source ──
+  // Opened from the glasses menu you want to pray, not to browse; opened from
+  // the phone, the picker is the whole point. The SDK pushes the source exactly
+  // once after the page is ready, and it can land either side of loadHours(), so
+  // both paths call maybeFollowLaunchSource() and the guard decides.
+  function registerLaunchSource(bridge: EvenAppBridge): void {
+    if (typeof (bridge as any).onLaunchSource !== 'function') return
+    bridge.onLaunchSource((source: LaunchSource) => {
+      state.launchSource = source
+      log(`Launched from ${source === 'glassesMenu' ? 'the glasses menu' : 'the phone'}`)
+      void maybeFollowLaunchSource()
+    })
+  }
+
+  async function maybeFollowLaunchSource(): Promise<void> {
+    if (state.autoOpened) return
+    if (state.launchSource !== 'glassesMenu') return
+    if (!state.bridge || state.view !== 'hours') return
+    const hours = visibleHours()
+    if (hours.length === 0) return
+    state.autoOpened = true
+    const idx = clamp(state.suggestedIndex, 0, hours.length - 1)
+    log(`Opening ${hours[idx]?.name ?? '(none)'} — due now`)
+    await openHourAtIndex(idx)
+  }
+
+  // ── The sun ──
+  async function refreshSolar(): Promise<void> {
+    state.coords = await getCoords(state.bridge, log)
+    state.solar = state.coords ? solarDay(state.coords) : null
+    if (state.solar && !state.solar.degenerate) {
+      log(`Sun here today: rise ${clockLabel(state.solar.sunrise)} · noon ${clockLabel(state.solar.solarNoon)} · set ${clockLabel(state.solar.sunset)}`)
+    } else if (state.solar?.degenerate) {
+      log('Polar day or night here — falling back to clock times')
     }
   }
 
@@ -877,7 +883,20 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
         if (np) state.hours.push({ ...np, name: `${prefix}${np.name}${suffix}` })
       }
 
+      // Firmware list highlighting always starts on the first item, so keep our
+      // idea of the selection in step with it and carry the suggestion
+      // separately — the ▸ marker, "Pray now" and a glasses-menu launch all use
+      // suggestedIndex, and nothing silently opens an hour the user did not
+      // highlight.
       state.selectedHourIndex = 0
+
+      const settings = loadSettings()
+      if (settings.solarHours) await refreshSolar()
+      const vis = visibleHours()
+      state.suggestedIndex = suggestHourIndex(vis, settings.solarHours ? state.solar : null)
+      const due = vis[state.suggestedIndex]
+      if (due) log(`Due now: ${due.name}`)
+
       onHoursLoaded?.(state.hours)
       log(`Loaded ${state.hours.length} hours`)
       publishPhase(state.mode === 'mock' ? 'mock' : state.mode === 'bridge' ? 'connected' : 'idle')
@@ -885,6 +904,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       if (state.bridge && state.hours.length > 0) {
         state.view = 'hours'
         await renderHourListPage()
+        void maybeFollowLaunchSource()
       }
 
       return state.hours
@@ -910,7 +930,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
       stopSpinner()
 
       if (content.day) state.day = content.day
-      ;({ pages: state.pages, sectionLabels: state.sectionLabels } = paginateSections(content.sections))
+      ;({ pages: state.pages, pageLines: state.pageLines, sectionLabels: state.sectionLabels } = paginateSections(content.sections, TEXT_W, LINES_PER_PAGE))
       state.pageIndex = 0
       state.view = 'reading'
       publishPhase('reading')
@@ -1015,6 +1035,7 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     void stopHeadGestureMode()
     stopSpinner()
     state.pages = []
+    state.pageLines = []
     state.pageIndex = 0
     state.view = 'hours'
     onReadingChanged?.('', '')
@@ -1047,6 +1068,14 @@ export function createLiturgyController({ setPhase, log, onReadingChanged, onHou
     setHostStorage,
     stopReading,
     renderHourList,
+    /** Today's solar times here, for the companion panel. Null without a fix. */
+    getSunTimes: () => state.solar,
+    /** Which office is due right now, as an index into the visible-hours list. */
+    getSuggestedHourIndex: () => state.suggestedIndex,
+    /** The office due right now, already filtered by the user's hidden hours. */
+    getDueHour: (): HourInfo | null => visibleHours()[state.suggestedIndex] ?? null,
+    /** Open the office that is due — the companion twin of the "Pray now" item. */
+    openSuggestedHour: () => openHourAtIndex(state.suggestedIndex),
     getState: () => ({ ...state }),
   }
 }

@@ -222,6 +222,12 @@ function settingsBlock(breviary: BreviarySource, L: Strings): string {
     <div class="ilp-setrow"><span class="k">${esc(L.rows.tap)}</span><span class="v">
       <select id="set-tap"><option value="1"${s.tapToAdvance ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.tapToAdvance ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.sec)}</span><span class="v"><input id="set-seconds" type="number" min="2" max="60" step="1" value="${s.autoScrollSeconds}" style="width:48px"></span></div>
+    <div class="ilp-setrow"><span class="k">Rubrics dimmed</span><span class="v">
+      <select id="set-tones"><option value="1"${s.toneBrightness ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.toneBrightness ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
+    <div class="ilp-setrow"><span class="k">Left temple goes back</span><span class="v">
+      <select id="set-temple"><option value="1"${s.templeNav ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.templeNav ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
+    <div class="ilp-setrow"><span class="k">Hours follow the sun</span><span class="v">
+      <select id="set-solar"><option value="1"${s.solarHours ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.solarHours ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.silence)}</span><span class="v">
       <select id="set-silence"><option value="1"${s.silenceEnabled ? ' selected' : ''}>${esc(L.onWord)}</option><option value="0"${!s.silenceEnabled ? ' selected' : ''}>${esc(L.offWord)}</option></select></span></div>
     <div class="ilp-setrow"><span class="k">${esc(L.rows.silenceSec)}</span><span class="v"><input id="set-silence-seconds" type="number" min="0" max="120" step="1" value="${s.silenceSeconds}" style="width:48px"></span></div>
@@ -238,6 +244,7 @@ function advancedBlock(): string {
   const today = new Date().toDateString()
   return `<div class="ilp-advbody" id="adv-body" hidden>
     <div class="ilp-setrow"><span class="k">Season</span><span class="v">${esc(detected)}${override} · ${esc(today)}</span></div>
+    <div class="ilp-setrow"><span class="k">Sun here today</span><span class="v" id="sun-val">—</span></div>
     <div class="ilp-prefetch" id="prefetch" hidden><span id="prefetch-label"></span><div class="bar"><div class="fill" id="prefetch-fill"></div></div></div>
     <div class="ilp-setrow"><span class="k">Date</span><span class="v"><input id="date-input" type="date" value="${todayInputValue()}"></span></div>
     <div class="ilp-setrow"><span class="k">Cache</span><span class="v" style="gap:12px"><span id="refresh-all" style="cursor:pointer;text-decoration:underline">refresh all</span><span id="copy-log" style="cursor:pointer;text-decoration:underline">copy log</span><span id="clear-log" style="cursor:pointer;text-decoration:underline">clear log</span></span></div>
@@ -394,7 +401,20 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
       <div class="ilp-ctrls">${isAuto ? `<span data-act="playpause">${esc(ppLabel)}</span>` : ''}<span data-act="prev">${icon('chevron-left', { size: 15 })} ${esc(L.ui.prev)}</span><span data-act="next">${esc(L.ui.next)} ${icon('chevron-right', { size: 15 })}</span><span data-act="remote">${esc(L.ui.remote)}</span><span class="stop" data-act="stop">${esc(L.ui.stop)}</span></div>`
   }
 
+  // Local solar times, once a fix has come back. Shown in the advanced block so
+  // the sun-anchored hour suggestion is inspectable rather than magic.
+  function updateSun() {
+    const el = $('sun-val'); if (!el) return
+    const solar = controller.getSunTimes()
+    if (!solar) { el.textContent = 'no location — using clock times'; return }
+    if (solar.degenerate) { el.textContent = 'polar day/night — using clock times'; return }
+    const hm = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    const due = controller.getDueHour()
+    el.textContent = `↑${hm(solar.sunrise)} · ☉${hm(solar.solarNoon)} · ↓${hm(solar.sunset)}${due ? ` · due: ${due.name}` : ''}`
+  }
+
   function updateDay() {
+    updateSun()
     const el = $('day-title'); if (!el) return
     const day = (controller.getState() as any).day
     if (!day || !day.title) return
@@ -497,6 +517,22 @@ function wireUpApp(breviary: BreviarySource, L: Strings, lent: boolean) {
   $('set-tap')?.addEventListener('change', (e) => {
     const s = loadSettings(); s.tapToAdvance = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
     appendLog(`Tap to advance: ${s.tapToAdvance ? 'on' : 'off'}`)
+  })
+  // Brightness tones: spoken text at full brightness, rubrics dimmed. Turning
+  // them off restores the old ASCII scaffolding, for an Even App that predates
+  // textColor (< 2.2.9). Takes effect on the next page render.
+  $('set-tones')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.toneBrightness = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
+    appendLog(`Rubrics dimmed: ${s.toneBrightness ? 'on' : 'off'}`)
+  })
+  $('set-temple')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.templeNav = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
+    appendLog(`Left temple goes back: ${s.templeNav ? 'on' : 'off'} (ring always advances)`)
+  })
+  $('set-solar')?.addEventListener('change', (e) => {
+    const s = loadSettings(); s.solarHours = (e.target as HTMLSelectElement).value === '1'; saveSettings(s); mirrorSettings()
+    appendLog(`Hours follow the sun: ${s.solarHours ? 'on' : 'off'}`)
+    void controller.loadHours() // re-derive which office is due
   })
   $('set-seconds')?.addEventListener('change', (e) => {
     const val = Number((e.target as HTMLInputElement).value)

@@ -11,6 +11,9 @@ const DEFAULTS: LiturgySettings = {
   silenceSeconds: 20,
   headTiltDeg: 10,
   tapToAdvance: true,
+  templeNav: true,
+  toneBrightness: true,
+  solarHours: true,
   hiddenHours: [],
   fontSize: 16,
   fontWeight: 100,
@@ -41,6 +44,9 @@ export function loadSettings(): LiturgySettings {
       headTiltDeg: typeof parsed.headTiltDeg === 'number' && parsed.headTiltDeg >= 3 && parsed.headTiltDeg <= 60
         ? parsed.headTiltDeg : DEFAULTS.headTiltDeg,
       tapToAdvance: typeof parsed.tapToAdvance === 'boolean' ? parsed.tapToAdvance : DEFAULTS.tapToAdvance,
+      templeNav: typeof parsed.templeNav === 'boolean' ? parsed.templeNav : DEFAULTS.templeNav,
+      toneBrightness: typeof parsed.toneBrightness === 'boolean' ? parsed.toneBrightness : DEFAULTS.toneBrightness,
+      solarHours: typeof parsed.solarHours === 'boolean' ? parsed.solarHours : DEFAULTS.solarHours,
       hiddenHours: Array.isArray(parsed.hiddenHours) ? parsed.hiddenHours : [],
       fontSize: typeof parsed.fontSize === 'number' && parsed.fontSize >= 10 && parsed.fontSize <= 28
         ? parsed.fontSize : DEFAULTS.fontSize,

@@ -162,3 +162,21 @@ export async function stopHeadGestures(bridge: EvenAppBridge): Promise<void> {
 export function isHeadGesturesActive(): boolean {
   return active
 }
+
+/**
+ * Re-take the level baseline from the next IMU sample.
+ *
+ * Head-tilt paging measures against a resting pitch captured when the mode
+ * starts, so it drifts if you started reading standing and carried on sitting.
+ * The long-press menu's "Recentre" calls this: whatever angle your head is at
+ * on the next sample becomes level.
+ */
+export function recenterHeadGestures(): void {
+  restPitch = null
+  heldDir = 0
+  armed = true
+  neutralSince = 0
+  lastEmit = 0
+  samples = 0
+  logCb?.('Head tilt recentred — current head angle is now level')
+}

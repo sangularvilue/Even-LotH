@@ -7,10 +7,15 @@
     "dev": "vite --host 0.0.0.0 --port 5179",
     "build": "vite build",
     "preview": "vite preview",
-    "serve": "cd server && npm run serve"
+    "serve": "cd server && npm run serve",
+    "check:page": "node checks/validate-page.mjs",
+    "check:font": "node checks/measure-font.mjs",
+    "check:paginate": "esbuild checks/paginate.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/paginate.mjs --log-level=error && node node_modules/.cache/paginate.mjs",
+    "check": "npm run check:page && npm run check:paginate"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.10",
+    "@evenrealities/even_hub_sdk": "0.0.14",
+    "@evenrealities/pretext": "^0.1.4",
     "@jappyjan/even-realities-ui": "^0.0.8",
     "jsdom": "^24.1.3",
     "qrcode": "^1.5.4"
